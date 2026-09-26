@@ -34,7 +34,8 @@ export function findBugLocation(
           const rel = path.relative(workspacePath, found).replace(/\\/g, '/');
           const language = detectLanguage(found);
           emit({ type: 'FILE_OPENED', file: rel, content, language });
-
+          emit({ type: 'CODE_HIGHLIGHT', file: rel, line: failure.line, reason: failure.error });
+          emit({ type: 'BUG_LOCATION_FOUND', file: rel, line: failure.line, reason: failure.error });
           return { file: rel, line: failure.line, reason: failure.error, content, language, fullPath: found };
         }
       }
@@ -51,7 +52,8 @@ export function findBugLocation(
         const resolved = resolveSourceFromTest(workspacePath, testFileFull, failures, emit);
         if (resolved) {
           emit({ type: 'FILE_OPENED', file: resolved.sourceFile, content: resolved.content, language: resolved.language });
-
+          emit({ type: 'CODE_HIGHLIGHT', file: resolved.sourceFile, line: resolved.line, reason: resolved.reason });
+          emit({ type: 'BUG_LOCATION_FOUND', file: resolved.sourceFile, line: resolved.line, reason: resolved.reason });
           return {
             file: resolved.sourceFile,
             line: resolved.line,
@@ -79,7 +81,7 @@ export function findBugLocation(
           const language = detectLanguage(found);
           emit({ type: 'FILE_OPENED', file: rel, content, language });
           emit({ type: 'INFERRED_CODE_PATH', description: `Identified ${rel} as likely bug location based on error message (INFERRED, not a runtime trace)` });
-
+          emit({ type: 'BUG_LOCATION_FOUND', file: rel, line: 1, reason: `${failure.error} (inferred)` });
           return { file: rel, line: 1, reason: failure.error, content, language, fullPath: found };
         }
       }
@@ -95,7 +97,8 @@ export function findBugLocation(
       const resolved = resolveSourceFromTest(workspacePath, testFile, failures, emit);
       if (resolved) {
         emit({ type: 'FILE_OPENED', file: resolved.sourceFile, content: resolved.content, language: resolved.language });
-
+        emit({ type: 'CODE_HIGHLIGHT', file: resolved.sourceFile, line: resolved.line, reason: resolved.reason });
+        emit({ type: 'BUG_LOCATION_FOUND', file: resolved.sourceFile, line: resolved.line, reason: resolved.reason });
         return {
           file: resolved.sourceFile,
           line: resolved.line,

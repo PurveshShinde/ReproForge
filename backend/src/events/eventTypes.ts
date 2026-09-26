@@ -24,6 +24,7 @@ export type InvestigationEvent =
   | { type: 'PATCH_PROPOSED'; files: string[]; diff?: string }
   | { type: 'PATCH_APPLIED'; files: string[] }
   | { type: 'PATCH_FAILED'; reason: string }
+  | { type: 'PATCH_GENERATION_FAILED'; reason: string }
   | { type: 'VERIFICATION_STARTED' }
   | { type: 'VERIFICATION_RESULT'; passed: boolean; regressionPassed: boolean; totalTests?: number; failedTests?: number; notes?: string }
   | { type: 'INFERRED_CODE_PATH'; description: string }

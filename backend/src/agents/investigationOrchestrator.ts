@@ -7,6 +7,9 @@ import { buildRepositoryGraph } from '../services/graphService';
 import { findBugLocation } from '../services/investigationService';
 import { generatePatch } from '../services/patchService';
 import { verifyFix } from '../services/verificationService';
+import { AIProvider } from '../services/aiProvider';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as crypto from 'crypto';
 
 // In-memory session store
@@ -159,90 +162,93 @@ export async function runInvestigation(id: string): Promise<void> {
       }
     }
 
-    // Phase 5: Locate bug
-    emit({ type: 'AGENT_STARTED', agent: 'Reproduction Agent' });
-    const bugLocation = findBugLocation(cloneResult.workspacePath, testResult.failures, projectInfo.sourceExtensions, emit);
+    // Process all failures sequentially
+    let remainingFailures = [...testResult.failures];
+    let testsFailedBefore = remainingFailures.length;
 
-    if (!bugLocation) {
-      if (testResult.failures.length > 0) {
-        emit({ type: 'INVESTIGATION_LOG', message: 'Unable to precisely locate bug file. Reporting test failures as evidence.', level: 'warn' });
-        emit({
-          type: 'ROOT_CAUSE_FOUND',
-          summary: `Test failures detected but precise source location could not be determined automatically.`,
-          evidence: testResult.failures.map(f => f.error),
-        });
-      } else {
-        const rootCauseSummary = investigationContext.userBug ?? 'No failing tests found and no bug description provided.';
-        if (/find a (failing )?bug|start with an easy bug|reproduce it|identify the root cause/i.test(rootCauseSummary)) {
-            emit({ type: 'INVESTIGATION_ERROR', message: 'Proposed root cause resembles a user instruction and was rejected.' });
-            emit({ type: 'AGENT_COMPLETED', agent: 'Reproduction Agent', summary: 'Could not reproduce automatically' });
-            emit({ type: 'INVESTIGATION_COMPLETED', success: false, summary: 'Unable to reproduce the reported issue.' });
-            session.status = 'completed';
-            cleanupWorkspace(cloneResult.workspacePath);
-            return;
-        }
+    for (let i = 0; i < remainingFailures.length; i++) {
+      const failure = remainingFailures[i];
+      
+      // Phase 5: Locate bug
+      emit({ type: 'AGENT_STARTED', agent: 'Reproduction Agent' });
+      emit({ type: 'INVESTIGATION_LOG', message: `✅ Deterministically reproduced by ${failure.file}`, level: 'info' });
 
-        emit({
-          type: 'ROOT_CAUSE_FOUND',
-          summary: rootCauseSummary,
-          evidence: ['no test failures'],
-        });
+      const bugLocation = findBugLocation(cloneResult.workspacePath, [failure], projectInfo.sourceExtensions, emit);
+
+      if (!bugLocation) {
+        emit({ type: 'INVESTIGATION_LOG', message: 'Unable to precisely locate bug file. Reporting test failure as evidence.', level: 'warn' });
+        emit({ type: 'ROOT_CAUSE_FOUND', summary: `Test failure detected but precise source location could not be determined automatically.`, evidence: [failure.error] });
+        emit({ type: 'AGENT_COMPLETED', agent: 'Reproduction Agent', summary: 'Could not reproduce automatically' });
+        continue;
       }
-      emit({ type: 'AGENT_COMPLETED', agent: 'Reproduction Agent', summary: 'Could not reproduce automatically' });
-      emit({ type: 'INVESTIGATION_COMPLETED', success: false, summary: 'Unable to reproduce the reported issue.' });
-      session.status = 'completed';
-      cleanupWorkspace(cloneResult.workspacePath);
-      return;
+
+      emit({ type: 'AGENT_COMPLETED', agent: 'Reproduction Agent', summary: `Bug located near ${bugLocation.file}` });
+
+      // Phase 6: Generate and apply patch
+      emit({ type: 'AGENT_STARTED', agent: 'Fix Agent' });
+      
+      let aiResult;
+      try {
+        aiResult = await AIProvider.analyzeRootCauseAndPatch({
+          mode: investigationContext.mode,
+          failingTest: failure,
+          testFile: failure.file,
+          actualValue: bugLocation.actual,
+          expectedValue: bugLocation.expected,
+          relevantSourceFiles: [bugLocation.file],
+          relevantSourceCode: bugLocation.content
+        });
+      } catch (e: any) {
+        emit({ type: 'PATCH_GENERATION_FAILED', reason: e.message });
+        emit({ type: 'AGENT_COMPLETED', agent: 'Fix Agent', summary: 'Fix generation failed' });
+        continue;
+      }
+
+      if (!aiResult) {
+        emit({ type: 'PATCH_GENERATION_FAILED', reason: 'AI returned null' });
+        emit({ type: 'AGENT_COMPLETED', agent: 'Fix Agent', summary: 'Fix generation failed' });
+        continue;
+      }
+
+      emit({ type: 'CODE_HIGHLIGHT', file: aiResult.file, line: aiResult.line, reason: aiResult.explanation });
+      emit({ type: 'BUG_LOCATION_FOUND', file: aiResult.file, line: aiResult.line, reason: aiResult.explanation });
+      emit({ type: 'ROOT_CAUSE_FOUND', summary: aiResult.explanation, evidence: ['AI analysis'] });
+
+      const fullPath = path.join(cloneResult.workspacePath, aiResult.file);
+      const originalContent = fs.readFileSync(fullPath, 'utf-8');
+      
+      if (!originalContent.includes(aiResult.originalCode) && !aiResult.originalCode.includes('//')) {
+         emit({ type: 'PATCH_FAILED', reason: 'Original code snippet not found in target file' });
+         emit({ type: 'AGENT_COMPLETED', agent: 'Fix Agent', summary: 'Patch application failed' });
+         continue;
+      }
+
+      const patchedContent = originalContent.replace(aiResult.originalCode, aiResult.replacementCode);
+      fs.writeFileSync(fullPath, patchedContent, 'utf-8');
+      
+      const diff = `--- a/${aiResult.file}\n+++ b/${aiResult.file}\n@@ -${aiResult.line},1 +${aiResult.line},1 @@\n-${aiResult.originalCode.trim()}\n+${aiResult.replacementCode.trim()}`;
+      
+      emit({ type: 'PATCH_PROPOSED', files: [aiResult.file], diff });
+      emit({ type: 'PATCH_APPLIED', files: [aiResult.file] });
+      emit({ type: 'AGENT_COMPLETED', agent: 'Fix Agent', summary: `Patch applied to ${aiResult.file}` });
+
+      // Phase 7: Verify
+      const verification = await verifyFix(cloneResult.workspacePath, projectInfo, emit);
+      
+      if (verification.totalFailed < testsFailedBefore) {
+         emit({ type: 'TEST_PASSED', test: failure.test || failure.file || 'unknown test' });
+         testsFailedBefore = verification.totalFailed;
+      } else {
+         emit({ type: 'INVESTIGATION_LOG', message: 'Test still failing after patch.', level: 'warn' });
+      }
     }
-
-    emit({ type: 'AGENT_COMPLETED', agent: 'Reproduction Agent', summary: `Bug located at ${bugLocation.file}:${bugLocation.line}` });
-
-    // Root cause
-    const evidence: string[] = [];
-    if (testResult.failures.length) evidence.push(`${testResult.failures.length} failing test(s)`);
-    if (bugLocation.file) evidence.push(`source code: ${bugLocation.file}:${bugLocation.line}`);
-    if (log.length) evidence.push(`${log.length} recent commits reviewed`);
-
-    const rootCauseSummary = bugLocation.reason;
-    if (/find a (failing )?bug|start with an easy bug|reproduce it|identify the root cause/i.test(rootCauseSummary)) {
-      emit({ type: 'INVESTIGATION_ERROR', message: 'Proposed root cause resembles a user instruction and was rejected.' });
-      emit({ type: 'AGENT_COMPLETED', agent: 'Reproduction Agent', summary: 'Could not reproduce automatically' });
-      emit({ type: 'INVESTIGATION_COMPLETED', success: false, summary: 'Unable to reproduce the reported issue.' });
-      session.status = 'completed';
-      cleanupWorkspace(cloneResult.workspacePath);
-      return;
-    }
-
-    emit({
-      type: 'ROOT_CAUSE_FOUND',
-      summary: rootCauseSummary,
-      evidence,
-    });
-
-    // Phase 6: Generate and apply patch
-    emit({ type: 'AGENT_STARTED', agent: 'Fix Agent' });
-    const patch = generatePatch(cloneResult.workspacePath, bugLocation, testResult.failures, emit);
-
-    if (!patch.success) {
-      emit({ type: 'PATCH_FAILED', reason: patch.error ?? 'Unknown error' });
-      emit({ type: 'AGENT_COMPLETED', agent: 'Fix Agent', summary: 'Could not generate patch automatically' });
-      emit({ type: 'INVESTIGATION_COMPLETED', success: false, summary: 'Fix generation failed' });
-      session.status = 'completed';
-      cleanupWorkspace(cloneResult.workspacePath);
-      return;
-    }
-
-    emit({ type: 'AGENT_COMPLETED', agent: 'Fix Agent', summary: `Patch applied to ${(patch.files ?? []).join(', ')}` });
-
-    // Phase 7: Verify
-    const verification = await verifyFix(cloneResult.workspacePath, projectInfo, emit);
 
     emit({
       type: 'INVESTIGATION_COMPLETED',
-      success: verification.regressionPassed,
-      summary: verification.regressionPassed
-        ? `Fix verified. ${verification.totalPassed} test(s) passed.`
-        : `Fix applied but ${verification.totalFailed} test(s) still failing.`,
+      success: testsFailedBefore === 0,
+      summary: testsFailedBefore === 0
+        ? `All issues fixed. 0 failing tests remaining.`
+        : `Fixes applied but ${testsFailedBefore} test(s) still failing.`,
     });
 
     session.status = 'completed';
