@@ -4,7 +4,7 @@
   "description": "ReproForge Visual backend",
   "main": "src/server.ts",
   "scripts": {
-    "dev": "nodemon --ext ts --exec 'tsx src/server.ts'",
+    "dev": "nodemon --ext ts --exec tsx src/server.ts",
     "start": "tsx src/server.ts",
     "build": "tsc",
     "test": "echo \"No backend tests\" && exit 0"
