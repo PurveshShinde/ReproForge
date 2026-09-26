@@ -4,6 +4,12 @@ ReproForge is an **AI-powered autonomous investigation and patching pipeline** d
 
 Think of it as a fully autonomous debugging engineer that takes a repository URL and a bug report (or just a failing test suite) and iteratively locates the exact faulty line of code, generates a patch, applies it, and verifies the fix by re-running the tests.
 
+## 🎥 Demo
+
+<video src="./demo.mp4" controls="controls" style="max-width: 100%;">
+  Your browser does not support the video tag.
+</video>
+
 ## 🚀 How It Works
 
 ReproForge executes a sophisticated multi-agent graph flow:

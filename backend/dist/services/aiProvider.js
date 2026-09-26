@@ -59,31 +59,66 @@ Respond EXACTLY in this JSON format, no markdown wrapping, no extra text:
     static mockAIPatch(context) {
         const code = context.relevantSourceCode || '';
         const file = context.relevantSourceFiles?.[0] || 'unknown';
+        const actual = context.actualValue ?? '';
+        const expected = context.expectedValue ?? '';
         const lines = code.split('\n');
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            if (context.expectedValue === 'true' && context.actualValue === 'false') {
-                if (line.includes("return { authenticated: false, error: 'Token expired' };")) {
-                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace('false', 'true').replace(", error: 'Token expired'", ""), explanation: 'ROOT CAUSE: Valid token returned false.' };
+            // ── Boolean: false returned where true expected ──────────────────────────
+            if (expected === 'true' && actual === 'false') {
+                if (/\bfalse\b/.test(line) && /\breturn\b/.test(line)) {
+                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace(/\bfalse\b/, 'true'), explanation: 'ROOT CAUSE: Function returned false but true was expected.' };
                 }
             }
-            if (context.actualValue === 'undefined') {
-                if (line.includes('delete data.id;')) {
-                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace('delete data.id;', '// delete data.id;'), explanation: 'ROOT CAUSE: ID field stripped from response.' };
+            // ── Undefined property: any delete/remove statement strips a field ───────
+            if (actual === 'undefined' && expected !== '') {
+                // Generic: any `delete obj.prop` line
+                const deleteMatch = line.match(/(\bdelete\s+\w+\.\w+)/);
+                if (deleteMatch) {
+                    const indent = line.match(/^(\s*)/)?.[1] ?? '';
+                    return { file, line: i + 1, originalCode: line, replacementCode: `${indent}// ${line.trimStart()}`, explanation: `ROOT CAUSE: Property deleted from response — receiver sees undefined.` };
+                }
+                // Generic: any `obj.prop = undefined` or removal pattern
+                const undefAssign = line.match(/\.\w+\s*=\s*undefined/);
+                if (undefAssign) {
+                    const replacement = line.replace(/\.\w+\s*=\s*undefined/, '');
+                    return { file, line: i + 1, originalCode: line, replacementCode: replacement, explanation: 'ROOT CAUSE: Field explicitly set to undefined.' };
                 }
             }
-            if (context.expectedValue === '200' && context.actualValue === '404') {
-                if (line.includes("targetService = 'users';")) {
-                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace("'users'", "'orders'"), explanation: 'ROOT CAUSE: Routing redirected to wrong service.' };
+            // ── HTTP routing: wrong status code (e.g. 404 instead of 200) ────────────
+            if (actual === '404' && expected === '200') {
+                // Wrong service name in routing assignment: targetService = 'wrong'
+                const routeAssign = line.match(/(\w+)\s*=\s*['"](\w+)['"]/);
+                if (routeAssign && /service|route|target|path|endpoint/i.test(line)) {
+                    // Infer the correct service from the test name if available
+                    const testName = context.failingTest?.test ?? '';
+                    const serviceMatch = testName.match(/to\s+(\w+)\s+service/i);
+                    const correctService = serviceMatch?.[1]?.toLowerCase() ?? '';
+                    const currentValue = routeAssign[2];
+                    if (correctService && currentValue.toLowerCase() !== correctService) {
+                        const replacement = line.replace(`'${currentValue}'`, `'${correctService}'`).replace(`"${currentValue}"`, `"${correctService}"`);
+                        return { file, line: i + 1, originalCode: line, replacementCode: replacement, explanation: `ROOT CAUSE: Router pointed at '${currentValue}' but should route to '${correctService}'.` };
+                    }
+                    // Fallback: comment out the suspicious line so router falls through
+                    return { file, line: i + 1, originalCode: line, replacementCode: `// ${line.trimStart()}`, explanation: `ROOT CAUSE: Suspicious routing assignment causes wrong service to be selected.` };
                 }
             }
-            if (context.expectedValue === '100' && context.actualValue === '52') {
-                if (line.includes("const total = quantity + price;")) {
-                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace('+', '*'), explanation: 'ROOT CAUSE: Wrong math operator.' };
+            // ── Wrong arithmetic operator ─────────────────────────────────────────────
+            const a = parseFloat(actual);
+            const e = parseFloat(expected);
+            if (!isNaN(a) && !isNaN(e) && /[+\-*/]/.test(line) && /\breturn\b|\bconst\b|\blet\b/.test(line)) {
+                if (a > e && line.includes('+') && !line.includes('//')) {
+                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace('+', '*'), explanation: `ROOT CAUSE: Used + instead of *. Got ${a}, expected ${e}.` };
+                }
+                if (a !== e && line.includes('+') && !line.includes('//') && e === a - (a - e)) {
+                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace('+', '*'), explanation: `ROOT CAUSE: Wrong arithmetic operator.` };
+                }
+                if (line.includes('*') && !line.includes('//') && a > e) {
+                    return { file, line: i + 1, originalCode: line, replacementCode: line.replace('*', '/'), explanation: `ROOT CAUSE: Used * instead of /. Got ${a}, expected ${e}.` };
                 }
             }
         }
-        throw new Error('PATCH_GENERATION_FAILED: Mock AI could not determine patch.');
+        throw new Error('PATCH_GENERATION_FAILED: Mock AI could not determine patch for this pattern. Add a GEMINI_API_KEY for full AI-powered analysis.');
     }
 }
 exports.AIProvider = AIProvider;
