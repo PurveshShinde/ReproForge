@@ -17,6 +17,7 @@
     "strict": true,
     "skipLibCheck": true,
     "moduleResolution": "node10",
+    "ignoreDeprecations": "6.0",
     "resolveJsonModule": true
   },
   "include": [
