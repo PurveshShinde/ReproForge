@@ -1,0 +1,28 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "ReproForge Visual backend",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "nodemon --ext ts --exec 'tsx src/server.ts'",
+    "start": "tsx src/server.ts",
+    "build": "tsc",
+    "test": "echo \"No backend tests\" && exit 0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.17.0",
+    "nodemon": "^3.1.14",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,463 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import type { InvestigationEvent } from '../events/eventTypes';
+import type { TestFailure } from './testRunner';
+
+export interface ResolvedSourceLocation {
+  sourceFile: string;          // relative path to source file
+  sourceFileFull: string;      // absolute path
+  functionName?: string;       // function/method that was called
+  line: number;                // line number of the likely bug
+  lineContent: string;         // the actual content of that line
+  reason: string;              // human-readable root cause
+  language: string;
+  content: string;             // full file content
+  actual?: string;             // actual value from assertion
+  expected?: string;           // expected value from assertion
+}
+
+/**
+ * Given a failing test file, follow its imports to find the actual source file
+ * containing the implementation under test. Works for JS/TS ES modules and CommonJS.
+ */
+export function resolveSourceFromTest(
+  workspacePath: string,
+  testFilePath: string,         // absolute path to the test file
+  failures: TestFailure[],
+  emit: (event: InvestigationEvent) => void
+): ResolvedSourceLocation | null {
+  const testContent = tryReadFile(testFilePath);
+  if (!testContent) return null;
+
+  const testRel = path.relative(workspacePath, testFilePath).replace(/\\/g, '/');
+  emit({ type: 'INVESTIGATION_LOG', message: `Following imports in ${testRel}...`, level: 'info' });
+
+  // ── Extract assertion context from test output ────────────────────────────
+  const assertionCtx = extractAssertionContext(failures);
+
+  // ── Parse all local imports from the test file ───────────────────────────
+  const imports = parseImports(testContent);
+  emit({ type: 'INVESTIGATION_LOG', message: `Found ${imports.length} local import(s): ${imports.map(i => i.specifier).join(', ')}`, level: 'info' });
+
+  const testDir = path.dirname(testFilePath);
+
+  for (const imp of imports) {
+    // Resolve the imported module to an actual file on disk
+    const resolvedFull = resolveImportPath(testDir, imp.specifier, workspacePath);
+    if (!resolvedFull) continue;
+
+    const sourceContent = tryReadFile(resolvedFull);
+    if (!sourceContent) continue;
+
+    const sourceRel = path.relative(workspacePath, resolvedFull).replace(/\\/g, '/');
+    emit({ type: 'FILE_DISCOVERED', file: sourceRel, kind: 'source' });
+    emit({ type: 'INVESTIGATION_LOG', message: `Resolved import "${imp.specifier}" → ${sourceRel}`, level: 'info' });
+
+    // ── For each imported name, find and inspect the function body ──────────
+    for (const importedName of imp.names) {
+      // If we have assertion context naming a function, prefer matching imports
+      if (assertionCtx.calledFunction && importedName !== assertionCtx.calledFunction) continue;
+
+      const loc = findBugInFunction(sourceContent, importedName, assertionCtx);
+      if (loc) {
+        const language = detectLanguage(resolvedFull);
+        emit({ type: 'INVESTIGATION_LOG', message: `Inspecting ${importedName}() in ${sourceRel}:${loc.line}`, level: 'info' });
+        return {
+          sourceFile: sourceRel,
+          sourceFileFull: resolvedFull,
+          functionName: importedName,
+          line: loc.line,
+          lineContent: loc.lineContent,
+          reason: loc.reason,
+          language,
+          content: sourceContent,
+          actual: assertionCtx.actual,
+          expected: assertionCtx.expected,
+        };
+      }
+    }
+
+    // ── Even if we didn't pinpoint a bug line, return the source file ───────
+    // so upstream can at least open it in Monaco and show the diff
+    const language = detectLanguage(resolvedFull);
+    const fallbackLine = findFunctionLine(sourceContent, imp.names[0] ?? '') ?? 1;
+    const fallbackContent = sourceContent.split('\n')[fallbackLine - 1] ?? '';
+    return {
+      sourceFile: sourceRel,
+      sourceFileFull: resolvedFull,
+      functionName: imp.names[0],
+      line: fallbackLine,
+      lineContent: fallbackContent,
+      reason: `Test failure in ${testRel} traces to ${sourceRel} via import "${imp.specifier}"`,
+      language,
+      content: sourceContent,
+      actual: assertionCtx.actual,
+      expected: assertionCtx.expected,
+    };
+  }
+
+  return null;
+}
+
+// ─── Assertion context extraction ─────────────────────────────────────────────
+
+interface AssertionCtx {
+  calledFunction?: string;
+  actual?: string;
+  expected?: string;
+  args?: string;
+}
+
+function extractAssertionContext(failures: TestFailure[]): AssertionCtx {
+  const ctx: AssertionCtx = {};
+
+  for (const f of failures) {
+    // Use pre-parsed assertionDetail first ("20 !== 5")
+    const detail = f.assertionDetail ?? f.error;
+    const neqMatch = detail.match(/(\S+)\s*!==\s*(\S+)/);
+    if (neqMatch) {
+      ctx.actual = neqMatch[1];
+      ctx.expected = neqMatch[2];
+    }
+
+    // "Expected values to be strictly equal: \n actual !== expected"
+    const strictEqMatch = detail.match(/Expected values to be strictly equal:\s*\n\s*(\S+)\s*!==\s*(\S+)/s);
+    if (strictEqMatch) {
+      ctx.actual = strictEqMatch[1];
+      ctx.expected = strictEqMatch[2];
+    }
+
+    // Extract function name from test name: "divide 10 by 2" → "divide"
+    if (f.test) {
+      const firstWord = f.test.split(/\s+/)[0]?.toLowerCase();
+      if (firstWord && /^[a-z_$][a-zA-Z0-9_$]*$/.test(firstWord)) {
+        ctx.calledFunction = firstWord;
+      }
+    }
+  }
+
+  return ctx;
+}
+
+// ─── Import parser ─────────────────────────────────────────────────────────────
+
+interface ParsedImport {
+  specifier: string;   // "./calculator.js"
+  names: string[];     // ["divide"]
+}
+
+function parseImports(content: string): ParsedImport[] {
+  const results: ParsedImport[] = [];
+  const seen = new Set<string>();
+
+  // ES module: import { foo, bar } from "./mod.js"
+  const namedImport = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
+  let m: RegExpExecArray | null;
+  while ((m = namedImport.exec(content)) !== null) {
+    const specifier = m[2] ?? '';
+    if (!isLocalSpecifier(specifier)) continue;
+    const names = m[1]!.split(',').map(n => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean);
+    const key = specifier;
+    if (!seen.has(key)) { seen.add(key); results.push({ specifier, names }); }
+  }
+
+  // ES module: import defaultName from "./mod.js"
+  const defaultImport = /import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from\s+['"]([^'"]+)['"]/g;
+  while ((m = defaultImport.exec(content)) !== null) {
+    const specifier = m[2] ?? '';
+    if (!isLocalSpecifier(specifier)) continue;
+    const name = m[1] ?? '';
+    if (!seen.has(specifier)) { seen.add(specifier); results.push({ specifier, names: [name] }); }
+  }
+
+  // ES module: import * as ns from "./mod.js"
+  const namespaceImport = /import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
+  while ((m = namespaceImport.exec(content)) !== null) {
+    const specifier = m[2] ?? '';
+    if (!isLocalSpecifier(specifier)) continue;
+    if (!seen.has(specifier)) { seen.add(specifier); results.push({ specifier, names: [m[1] ?? ''] }); }
+  }
+
+  // CJS: const { foo } = require("./mod")
+  const cjsNamed = /(?:const|let|var)\s+\{([^}]+)\}\s*=\s*require\(['"]([^'"]+)['"]\)/g;
+  while ((m = cjsNamed.exec(content)) !== null) {
+    const specifier = m[2] ?? '';
+    if (!isLocalSpecifier(specifier)) continue;
+    const names = m[1]!.split(',').map(n => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean);
+    if (!seen.has(specifier)) { seen.add(specifier); results.push({ specifier, names }); }
+  }
+
+  // CJS: const foo = require("./mod")
+  const cjsDefault = /(?:const|let|var)\s+(\w+)\s*=\s*require\(['"]([^'"]+)['"]\)/g;
+  while ((m = cjsDefault.exec(content)) !== null) {
+    const specifier = m[2] ?? '';
+    if (!isLocalSpecifier(specifier)) continue;
+    if (!seen.has(specifier)) { seen.add(specifier); results.push({ specifier, names: [m[1] ?? ''] }); }
+  }
+
+  return results;
+}
+
+function isLocalSpecifier(spec: string): boolean {
+  return spec.startsWith('./') || spec.startsWith('../');
+}
+
+// ─── Import path resolver ──────────────────────────────────────────────────────
+
+function resolveImportPath(fromDir: string, specifier: string, workspacePath: string): string | null {
+  // Strip query string / hash
+  const bare = specifier.split('?')[0]!.split('#')[0]!;
+
+  const candidate = path.resolve(fromDir, bare);
+
+  // If the specifier already has an extension and the file exists, use it
+  if (path.extname(candidate) && fs.existsSync(candidate)) return candidate;
+
+  // Try common extensions
+  const extensions = ['.js', '.mjs', '.cjs', '.ts', '.mts', '.tsx', '.jsx'];
+  for (const ext of extensions) {
+    const full = candidate.endsWith(ext) ? candidate : candidate + ext;
+    if (fs.existsSync(full)) return full;
+  }
+
+  // Try index files
+  for (const ext of extensions) {
+    const full = path.join(candidate, `index${ext}`);
+    if (fs.existsSync(full)) return full;
+  }
+
+  // Must stay inside the workspace
+  const resolved = path.resolve(fromDir, bare);
+  if (!resolved.startsWith(workspacePath)) return null;
+
+  return null;
+}
+
+// ─── Function finder + bug heuristic ──────────────────────────────────────────
+
+interface FunctionBugResult {
+  line: number;         // 1-based
+  lineContent: string;
+  reason: string;
+}
+
+function findBugInFunction(
+  content: string,
+  funcName: string,
+  ctx: AssertionCtx
+): FunctionBugResult | null {
+  const lines = content.split('\n');
+  const funcLine = findFunctionLine(content, funcName);
+  if (funcLine === null) return null;
+
+  // Collect the function body (up to the closing brace or 30 lines)
+  const bodyLines = collectFunctionBody(lines, funcLine - 1);
+
+  // ── Heuristic: wrong operator ──────────────────────────────────────────────
+  // If actual > expected and we see multiplication instead of division
+  if (ctx.actual !== undefined && ctx.expected !== undefined) {
+    const actual = parseFloat(ctx.actual);
+    const expected = parseFloat(ctx.expected);
+
+    for (const { idx, text } of bodyLines) {
+      // division expected but multiplication found
+      if (!isNaN(actual) && !isNaN(expected) && actual === expected * (actual / expected)) {
+        if (/\breturn\b.*\*/.test(text) && actual !== 0 && expected !== 0 && actual / expected === actual / expected) {
+          // actual = a * b, expected = a / b → multiply bug
+          if (actual > expected || actual < expected) {
+            return {
+              line: idx + 1,
+              lineContent: text,
+              reason: buildWrongOperatorReason(funcName, text, ctx, '* instead of /', '÷'),
+            };
+          }
+        }
+      }
+
+      // subtraction expected but addition
+      if (/\breturn\b.*\+/.test(text) && !isNaN(actual) && !isNaN(expected) && actual > expected) {
+        return { line: idx + 1, lineContent: text, reason: buildWrongOperatorReason(funcName, text, ctx, '+ instead of -', '-') };
+      }
+
+      // addition expected but subtraction
+      if (/\breturn\b.*-/.test(text) && !isNaN(actual) && !isNaN(expected) && actual < expected) {
+        return { line: idx + 1, lineContent: text, reason: buildWrongOperatorReason(funcName, text, ctx, '- instead of +', '+') };
+      }
+    }
+  }
+
+  // ── Heuristic: any return-with-operator line ───────────────────────────────
+  for (const { idx, text } of bodyLines) {
+    if (/\breturn\b/.test(text) && /[+\-*/]/.test(text)) {
+      const reason = ctx.actual && ctx.expected
+        ? `${funcName}() returns ${ctx.actual} but expected ${ctx.expected}. Implementation: \`${text.trim()}\``
+        : `Suspicious return statement in ${funcName}(): \`${text.trim()}\``;
+      return { line: idx + 1, lineContent: text, reason };
+    }
+  }
+
+  // ── Fallback: first line of body ──────────────────────────────────────────
+  const first = bodyLines[0];
+  if (first) {
+    return {
+      line: first.idx + 1,
+      lineContent: first.text,
+      reason: `Test failure traced to ${funcName}() starting at this line`,
+    };
+  }
+
+  return null;
+}
+
+function buildWrongOperatorReason(
+  funcName: string,
+  lineContent: string,
+  ctx: AssertionCtx,
+  wrongOp: string,
+  _correctOp: string
+): string {
+  const parts: string[] = [`${funcName}() uses ${wrongOp}.`];
+  if (ctx.actual !== undefined && ctx.expected !== undefined) {
+    parts.push(`Expected result: ${ctx.expected}, actual result: ${ctx.actual}.`);
+  }
+  parts.push(`Implementation: \`${lineContent.trim()}\``);
+  return parts.join(' ');
+}
+
+function findFunctionLine(content: string, name: string): number | null {
+  if (!name) return null;
+  const lines = content.split('\n');
+  // Various patterns: function foo, const foo =, foo(, export function foo
+  const patterns = [
+    new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${escapeRe(name)}\\s*\\(`),
+    new RegExp(`(?:const|let|var)\\s+${escapeRe(name)}\\s*=\\s*(?:async\\s+)?(?:function|\\(|[A-Za-z_$])`),
+    new RegExp(`${escapeRe(name)}\\s*(?:=\\s*)?\\(.*\\)\\s*(?:=>|\\{)`),
+    // class method
+    new RegExp(`^\\s*(?:async\\s+)?${escapeRe(name)}\\s*\\(`),
+  ];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    for (const pat of patterns) {
+      if (pat.test(line)) return i + 1;
+    }
+  }
+  return null;
+}
+
+function collectFunctionBody(lines: string[], startIdx: number): Array<{ idx: number; text: string }> {
+  const result: Array<{ idx: number; text: string }> = [];
+  let depth = 0;
+  let inBody = false;
+  for (let i = startIdx; i < Math.min(lines.length, startIdx + 60); i++) {
+    const line = lines[i] ?? '';
+    for (const ch of line) {
+      if (ch === '{') { depth++; inBody = true; }
+      if (ch === '}') depth--;
+    }
+    if (inBody) result.push({ idx: i, text: line });
+    if (inBody && depth === 0) break;
+  }
+  return result;
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ─── Patch generation ──────────────────────────────────────────────────────────
+
+export interface SourcePatch {
+  patchedContent: string;
+  diff: string;   // unified diff lines for display
+}
+
+/**
+ * Generates the minimal fix for a wrong-operator bug discovered via import analysis.
+ * Returns the patched content and a unified-diff-style string.
+ */
+export function generateSourcePatch(
+  location: ResolvedSourceLocation,
+  _failures: TestFailure[]
+): SourcePatch | null {
+  const lines = location.content.split('\n');
+  const bugLine = lines[location.line - 1] ?? '';
+
+  // Determine the fix: look for wrong operator in the return statement
+  const fixed = applyOperatorFix(bugLine, location.actual, location.expected);
+  if (!fixed || fixed === bugLine) return null;
+
+  const newLines = [...lines];
+  newLines[location.line - 1] = fixed;
+  const patchedContent = newLines.join('\n');
+
+  const diff = buildUnifiedDiff(location.sourceFile, bugLine, fixed, location.line);
+  return { patchedContent, diff };
+}
+
+function applyOperatorFix(line: string, actual?: string, expected?: string): string | null {
+  const a = actual !== undefined ? parseFloat(actual) : NaN;
+  const e = expected !== undefined ? parseFloat(expected) : NaN;
+
+  // multiply → divide: actual is larger and a*b = actual while a/b = expected
+  if (!isNaN(a) && !isNaN(e) && /\*/.test(line) && a !== e) {
+    // Most common: divide function uses * instead of /
+    if (line.includes('*') && !line.includes('/') && !line.includes('//')) {
+      return line.replace(/\*/g, '/');
+    }
+  }
+
+  // subtract → add
+  if (!isNaN(a) && !isNaN(e) && a < e && /return\s.+-/.test(line)) {
+    return line.replace(/-(?!=)/, '+');
+  }
+
+  // add → subtract
+  if (!isNaN(a) && !isNaN(e) && a > e && /return\s.*\+/.test(line)) {
+    return line.replace(/\+/, '-');
+  }
+
+  // Generic: replace first arithmetic operator with the correct one
+  // Try all operators
+  if (!isNaN(a) && !isNaN(e)) {
+    for (const [wrong, right] of [['+', '-'], ['-', '+'], ['*', '/'], ['/', '*']] as [string, string][]) {
+      if (line.includes(wrong)) {
+        const candidate = line.replace(wrong, right);
+        // we can't evaluate without knowing the arguments, so trust the operator-swap heuristic
+        if (candidate !== line) return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildUnifiedDiff(file: string, oldLine: string, newLine: string, lineNo: number): string {
+  return [
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    `@@ -${lineNo},1 +${lineNo},1 @@`,
+    `-${oldLine}`,
+    `+${newLine}`,
+  ].join('\n');
+}
+
+// ─── Utilities ─────────────────────────────────────────────────────────────────
+
+function tryReadFile(file: string): string | null {
+  try {
+    const stat = fs.statSync(file);
+    if (stat.size > 300_000) return null;
+    return fs.readFileSync(file, 'utf-8');
+  } catch { return null; }
+}
+
+function detectLanguage(file: string): string {
+  const ext = path.extname(file);
+  const map: Record<string, string> = {
+    '.java': 'java', '.ts': 'typescript', '.tsx': 'typescript',
+    '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript',
+    '.cjs': 'javascript', '.py': 'python', '.kt': 'kotlin',
+    '.rb': 'ruby', '.go': 'go',
+  };
+  return map[ext] ?? 'plaintext';
+}

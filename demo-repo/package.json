@@ -1,0 +1,17 @@
+{
+  "name": "demo-buggy-shop",
+  "version": "1.0.0",
+  "description": "ReproForge demo repository — contains a deterministic null-reference bug in PaymentService",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "jest --forceExit",
+    "start": "node src/index.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  }
+}
