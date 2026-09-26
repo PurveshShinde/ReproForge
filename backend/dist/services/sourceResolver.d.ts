@@ -17,7 +17,7 @@ export interface ResolvedSourceLocation {
  * containing the implementation under test. Works for JS/TS ES modules and CommonJS.
  */
 export declare function resolveSourceFromTest(workspacePath: string, testFilePath: string, // absolute path to the test file
-failures: TestFailure[], emit: (event: InvestigationEvent) => void): ResolvedSourceLocation | null;
+failures: TestFailure[], emit: (event: InvestigationEvent) => void, depth?: number): ResolvedSourceLocation | null;
 export interface SourcePatch {
     patchedContent: string;
     diff: string;

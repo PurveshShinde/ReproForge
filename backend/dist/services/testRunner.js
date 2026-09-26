@@ -30,21 +30,52 @@ async function runTests(workspacePath, projectInfo, emit) {
         emit({ type: 'INVESTIGATION_LOG', message: `Test command "${cmd}" is not in the safe list, skipping.`, level: 'warn' });
         return { exitCode: -1, output: 'Test command not allowed.', failures: [], passed: 0, failed: 0, duration: 0, status: 'ENVIRONMENT_FAILED', testsRun: 0, errors: 0, skipped: 0 };
     }
+    // Ensure dependencies are installed before testing
+    try {
+        if (projectInfo.buildTool === 'npm') {
+            emit({ type: 'INVESTIGATION_LOG', message: `Installing dependencies with npm...`, level: 'info' });
+            (0, child_process_1.execSync)('npm install', { cwd: workspacePath, stdio: 'ignore' });
+        }
+        else if (projectInfo.buildTool === 'yarn') {
+            emit({ type: 'INVESTIGATION_LOG', message: `Installing dependencies with yarn...`, level: 'info' });
+            (0, child_process_1.execSync)('yarn install', { cwd: workspacePath, stdio: 'ignore' });
+        }
+        else if (projectInfo.buildTool === 'pnpm') {
+            emit({ type: 'INVESTIGATION_LOG', message: `Installing dependencies with pnpm...`, level: 'info' });
+            (0, child_process_1.execSync)('pnpm install', { cwd: workspacePath, stdio: 'ignore' });
+        }
+    }
+    catch (e) {
+        emit({ type: 'INVESTIGATION_LOG', message: `Dependency installation failed: ${e.message}`, level: 'warn' });
+    }
     emit({ type: 'TEST_STARTED', command: cmd });
     emit({ type: 'INVESTIGATION_LOG', message: `Running: ${cmd}`, level: 'info' });
     const startTime = Date.now();
     let output = '';
+    const env = {
+        ...process.env,
+        CI: '1',
+        TERM: 'dumb',
+    };
     const exitCode = await new Promise((resolve) => {
-        const proc = (0, child_process_1.spawn)(executable, args, {
-            cwd: workspacePath,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            shell: process.platform === 'win32',
-            env: {
-                ...process.env,
-                CI: '1',
-                TERM: 'dumb',
-            },
-        });
+        let proc;
+        if (process.platform === 'win32') {
+            const fullCommand = [executable, ...args].join(' ');
+            proc = (0, child_process_1.spawn)(fullCommand, {
+                cwd: workspacePath,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                shell: true,
+                env,
+            });
+        }
+        else {
+            proc = (0, child_process_1.spawn)(executable, args, {
+                cwd: workspacePath,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                shell: false,
+                env,
+            });
+        }
         const onData = (data) => {
             const chunk = data.toString();
             output += chunk;
@@ -186,18 +217,17 @@ function parseFailures(output, parser) {
             const detail = m[1]?.trim() ?? '';
             const rawFile = m[2]?.trim() ?? '';
             const lineNo = parseInt(m[3] ?? '0', 10);
-            // rawFile may be an absolute path — basename is enough for resolution
             const fileBase = rawFile.split(/[\\/]/).pop() ?? rawFile;
-            if (failures.length > 0) {
-                const last = failures[failures.length - 1];
+            const targetFailure = failures.find(f => !f.assertionDetail) || (failures.length > 0 ? failures[failures.length - 1] : null);
+            if (targetFailure) {
                 if (detail)
-                    last.assertionDetail = detail;
-                if (detail && !last.error.includes('!=='))
-                    last.error = detail;
+                    targetFailure.assertionDetail = detail;
+                if (detail && !targetFailure.error.includes('!=='))
+                    targetFailure.error = detail;
                 if (fileBase)
-                    last.file = fileBase;
+                    targetFailure.file = fileBase;
                 if (lineNo > 0)
-                    last.line = lineNo;
+                    targetFailure.line = lineNo;
             }
             else {
                 failures.push({ error: detail || 'AssertionError', file: fileBase || undefined, line: lineNo || undefined, assertionDetail: detail || undefined });
@@ -207,11 +237,11 @@ function parseFailures(output, parser) {
         const neqPattern = /^\s*(\S+)\s*!==\s*(\S+)\s*$/gm;
         while ((m = neqPattern.exec(output)) !== null) {
             const detail = `${m[1]} !== ${m[2]}`;
-            for (const f of failures) {
-                if (!f.assertionDetail) {
-                    f.assertionDetail = detail;
-                    f.error = detail;
-                }
+            // Do not assign to all failures! Just the next unassigned one.
+            const unassigned = failures.find(f => !f.assertionDetail);
+            if (unassigned) {
+                unassigned.assertionDetail = detail;
+                unassigned.error = detail;
             }
         }
         // "test at calculator.test.js:5:1" — gives us the test file location

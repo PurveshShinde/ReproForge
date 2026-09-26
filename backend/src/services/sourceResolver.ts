@@ -24,22 +24,26 @@ export function resolveSourceFromTest(
   workspacePath: string,
   testFilePath: string,         // absolute path to the test file
   failures: TestFailure[],
-  emit: (event: InvestigationEvent) => void
+  emit: (event: InvestigationEvent) => void,
+  depth: number = 0
 ): ResolvedSourceLocation | null {
   const testContent = tryReadFile(testFilePath);
   if (!testContent) return null;
 
   const testRel = path.relative(workspacePath, testFilePath).replace(/\\/g, '/');
-  emit({ type: 'INVESTIGATION_LOG', message: `Following imports in ${testRel}...`, level: 'info' });
+  if (depth === 0) emit({ type: 'INVESTIGATION_LOG', message: `Following imports in ${testRel}...`, level: 'info' });
 
   // ── Extract assertion context from test output ────────────────────────────
   const assertionCtx = extractAssertionContext(failures);
+  const testBasename = path.basename(testFilePath).replace(/\.(test|spec)\.(js|ts|jsx|tsx)$/i, '').toLowerCase();
 
   // ── Parse all local imports from the test file ───────────────────────────
   const imports = parseImports(testContent);
-  emit({ type: 'INVESTIGATION_LOG', message: `Found ${imports.length} local import(s): ${imports.map(i => i.specifier).join(', ')}`, level: 'info' });
+  if (depth === 0) emit({ type: 'INVESTIGATION_LOG', message: `Found ${imports.length} local import(s): ${imports.map(i => i.specifier).join(', ')}`, level: 'info' });
 
   const testDir = path.dirname(testFilePath);
+  let bestFallback: ResolvedSourceLocation | null = null;
+  let bestFallbackScore = -1;
 
   for (const imp of imports) {
     // Resolve the imported module to an actual file on disk
@@ -54,50 +58,91 @@ export function resolveSourceFromTest(
     emit({ type: 'EDGE_DISCOVERED', source: testRel, target: sourceRel, relation: 'imports' });
     emit({ type: 'INVESTIGATION_LOG', message: `Resolved import "${imp.specifier}" → ${sourceRel}`, level: 'info' });
 
+    const sourceBasename = path.basename(resolvedFull).replace(/\.(js|ts|jsx|tsx)$/i, '').toLowerCase();
+    
+    // Score this file based on name match
+    let fileScore = 0;
+    if (sourceBasename === testBasename) fileScore = 100;
+    else if (sourceBasename.includes(testBasename) || testBasename.includes(sourceBasename)) fileScore = 50;
+
     // ── For each imported name, find and inspect the function body ──────────
     for (const importedName of imp.names) {
-      // If we have assertion context naming a function, prefer matching imports
-      if (assertionCtx.calledFunction && importedName !== assertionCtx.calledFunction) continue;
+      if (depth === 0 && assertionCtx.calledFunction) {
+        const fn = assertionCtx.calledFunction.toLowerCase();
+        const name = importedName.toLowerCase();
+        // Allow match if either string contains the other (covers "router" ↔ "routeRequest", "gateway" ↔ "forwardRequest", etc.)
+        if (name !== fn && !name.includes(fn) && !fn.includes(name)) {
+          continue;
+        }
+      }
 
       const loc = findBugInFunction(sourceContent, importedName, assertionCtx);
       if (loc) {
         const language = detectLanguage(resolvedFull);
-        emit({ type: 'INVESTIGATION_LOG', message: `Inspecting ${importedName}() in ${sourceRel}:${loc.line}`, level: 'info' });
-        return {
-          sourceFile: sourceRel,
-          sourceFileFull: resolvedFull,
-          functionName: importedName,
-          line: loc.line,
-          lineContent: loc.lineContent,
-          reason: loc.reason,
-          language,
-          content: sourceContent,
-          actual: assertionCtx.actual,
-          expected: assertionCtx.expected,
-        };
+        
+        // If we found a definitive bug (not just a fallback)
+        if (!loc.reason.startsWith('Test failure traced to')) {
+           emit({ type: 'INVESTIGATION_LOG', message: `Inspecting ${importedName}() in ${sourceRel}:${loc.line}`, level: 'info' });
+           return {
+             sourceFile: sourceRel,
+             sourceFileFull: resolvedFull,
+             functionName: importedName,
+             line: loc.line,
+             lineContent: loc.lineContent,
+             reason: loc.reason,
+             language,
+             content: sourceContent,
+             actual: assertionCtx.actual,
+             expected: assertionCtx.expected,
+           };
+        }
       }
     }
 
-    // ── Even if we didn't pinpoint a bug line, return the source file ───────
-    // so upstream can at least open it in Monaco and show the diff
-    const language = detectLanguage(resolvedFull);
-    const fallbackLine = findFunctionLine(sourceContent, imp.names[0] ?? '') ?? 1;
-    const fallbackContent = sourceContent.split('\n')[fallbackLine - 1] ?? '';
-    return {
-      sourceFile: sourceRel,
-      sourceFileFull: resolvedFull,
-      functionName: imp.names[0],
-      line: fallbackLine,
-      lineContent: fallbackContent,
-      reason: `Test failure in ${testRel} traces to ${sourceRel} via import "${imp.specifier}"`,
-      language,
-      content: sourceContent,
-      actual: assertionCtx.actual,
-      expected: assertionCtx.expected,
-    };
+    // If we didn't find a definitive bug here, follow one additional call level
+    if (depth < 2) {
+      const deeper = resolveSourceFromTest(workspacePath, resolvedFull, failures, emit, depth + 1);
+      if (deeper) {
+         if (!deeper.reason.startsWith('Test failure traced to')) {
+            return deeper; // Found definitive bug deeper
+         }
+         
+         // Evaluate the deeper fallback
+         const deeperBasename = path.basename(deeper.sourceFileFull).replace(/\.(js|ts|jsx|tsx)$/i, '').toLowerCase();
+         let deeperScore = 0;
+         if (deeperBasename === testBasename) deeperScore = 100;
+         else if (deeperBasename.includes(testBasename) || testBasename.includes(deeperBasename)) deeperScore = 50;
+         
+         if (deeperScore > bestFallbackScore) {
+            bestFallbackScore = deeperScore;
+            bestFallback = deeper;
+         }
+      }
+    }
+
+    // ── Even if we didn't pinpoint a bug line, store the source file as fallback ───────
+    if (fileScore >= bestFallbackScore || !bestFallback) {
+      const language = detectLanguage(resolvedFull);
+      const fallbackLine = findFunctionLine(sourceContent, imp.names[0] ?? '') ?? 1;
+      const fallbackContent = sourceContent.split('\n')[fallbackLine - 1] ?? '';
+      
+      bestFallbackScore = fileScore;
+      bestFallback = {
+        sourceFile: sourceRel,
+        sourceFileFull: resolvedFull,
+        functionName: imp.names[0],
+        line: fallbackLine,
+        lineContent: fallbackContent,
+        reason: `Test failure in ${testRel} traces to ${sourceRel} via import "${imp.specifier}"`,
+        language,
+        content: sourceContent,
+        actual: assertionCtx.actual,
+        expected: assertionCtx.expected,
+      };
+    }
   }
 
-  return null;
+  return bestFallback;
 }
 
 // ─── Assertion context extraction ─────────────────────────────────────────────
@@ -117,15 +162,15 @@ function extractAssertionContext(failures: TestFailure[]): AssertionCtx {
     const detail = f.assertionDetail ?? f.error;
     const neqMatch = detail.match(/(\S+)\s*!==\s*(\S+)/);
     if (neqMatch) {
-      ctx.actual = neqMatch[1];
-      ctx.expected = neqMatch[2];
+      ctx.actual = stripQuotes(neqMatch[1]!);
+      ctx.expected = stripQuotes(neqMatch[2]!);
     }
 
     // "Expected values to be strictly equal: \n actual !== expected"
     const strictEqMatch = detail.match(/Expected values to be strictly equal:\s*\n\s*(\S+)\s*!==\s*(\S+)/s);
     if (strictEqMatch) {
-      ctx.actual = strictEqMatch[1];
-      ctx.expected = strictEqMatch[2];
+      ctx.actual = stripQuotes(strictEqMatch[1]!);
+      ctx.expected = stripQuotes(strictEqMatch[2]!);
     }
 
     // Extract function name from test name: "divide 10 by 2" → "divide"
@@ -263,7 +308,7 @@ function findBugInFunction(
     for (const { idx, text } of bodyLines) {
       // division expected but multiplication found
       if (!isNaN(actual) && !isNaN(expected) && actual === expected * (actual / expected)) {
-        if (/\breturn\b.*\*/.test(text) && actual !== 0 && expected !== 0 && actual / expected === actual / expected) {
+        if (/\*/.test(text) && actual !== 0 && expected !== 0 && actual / expected === actual / expected) {
           // actual = a * b, expected = a / b → multiply bug
           if (actual > expected || actual < expected) {
             return {
@@ -276,13 +321,32 @@ function findBugInFunction(
       }
 
       // subtraction expected but addition
-      if (/\breturn\b.*\+/.test(text) && !isNaN(actual) && !isNaN(expected) && actual > expected) {
+      if (/\+/.test(text) && !isNaN(actual) && !isNaN(expected) && actual > expected) {
         return { line: idx + 1, lineContent: text, reason: buildWrongOperatorReason(funcName, text, ctx, '+ instead of -', '-') };
       }
 
       // addition expected but subtraction
-      if (/\breturn\b.*-/.test(text) && !isNaN(actual) && !isNaN(expected) && actual < expected) {
+      if (/-/.test(text) && !isNaN(actual) && !isNaN(expected) && actual < expected) {
         return { line: idx + 1, lineContent: text, reason: buildWrongOperatorReason(funcName, text, ctx, '- instead of +', '+') };
+      }
+    }
+  }
+
+
+  // ── Heuristic: Missing properties (undefined actual) ───────────────────────
+  if (ctx.actual === 'undefined' && ctx.expected !== undefined) {
+    for (const { idx, text } of bodyLines) {
+      if (/\b(?:delete|remove)\b/.test(text)) {
+        return { line: idx + 1, lineContent: text, reason: `Suspicious property removal found: \`${text.trim()}\`` };
+      }
+    }
+  }
+
+  // ── Heuristic: Routing mismatch (404 actual, 200 expected) ─────────────────
+  if (ctx.actual === '404' && ctx.expected === '200') {
+    for (const { idx, text } of bodyLines) {
+      if (/\b(?:req\.path|url|targetService)\b/.test(text) && /['"]/.test(text)) {
+        return { line: idx + 1, lineContent: text, reason: `Suspicious routing logic found: \`${text.trim()}\`` };
       }
     }
   }
@@ -363,6 +427,11 @@ function collectFunctionBody(lines: string[], startIdx: number): Array<{ idx: nu
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Strip surrounding single or double quotes from a captured assertion value. */
+function stripQuotes(s: string): string {
+  return s.replace(/^(['"])(.*)\1$/, '$2');
 }
 
 // ─── Patch generation ──────────────────────────────────────────────────────────

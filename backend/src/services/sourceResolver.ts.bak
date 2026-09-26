@@ -51,6 +51,7 @@ export function resolveSourceFromTest(
 
     const sourceRel = path.relative(workspacePath, resolvedFull).replace(/\\/g, '/');
     emit({ type: 'FILE_DISCOVERED', file: sourceRel, kind: 'source' });
+    emit({ type: 'EDGE_DISCOVERED', source: testRel, target: sourceRel, relation: 'imports' });
     emit({ type: 'INVESTIGATION_LOG', message: `Resolved import "${imp.specifier}" → ${sourceRel}`, level: 'info' });
 
     // ── For each imported name, find and inspect the function body ──────────
