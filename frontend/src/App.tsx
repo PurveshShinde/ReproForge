@@ -3,7 +3,7 @@ import ReactFlow, { Background, Controls, MarkerType } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import Editor from '@monaco-editor/react';
-import { Play, Activity, Code2, GitCommit, Search, ShieldCheck, TerminalSquare, GitBranch, ChevronRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Play, Activity, Code2, GitCommit, Search, ShieldCheck, TerminalSquare, GitBranch, ChevronRight, AlertCircle, CheckCircle2, Loader2, RotateCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/$/, '');
@@ -293,12 +293,24 @@ function RealRepositoryMode() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const nodeMap = useRef<Map<string, string>>(new Map()); // label → node id
 
+  const [isCheckingBackend, setIsCheckingBackend] = useState(false);
+
   // Check backend availability
-  useEffect(() => {
-    fetch(`${API_BASE}/api/health`)
-      .then(r => r.ok ? setBackendAvailable(true) : setBackendAvailable(false))
-      .catch(() => setBackendAvailable(false));
+  const checkBackend = useCallback(async () => {
+    setIsCheckingBackend(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/health`);
+      setBackendAvailable(r.ok);
+    } catch {
+      setBackendAvailable(false);
+    } finally {
+      setIsCheckingBackend(false);
+    }
   }, []);
+
+  useEffect(() => {
+    checkBackend();
+  }, [checkBackend]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -575,13 +587,35 @@ function RealRepositoryMode() {
 
   if (backendAvailable === false) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <AlertCircle size={48} className="text-yellow-500 mx-auto mb-4" />
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="text-center max-w-lg bg-[#111827] border border-gray-800 rounded-xl p-8 shadow-xl">
+          <AlertCircle size={44} className="text-yellow-500 mx-auto mb-4" />
           <h2 className="text-xl font-bold text-white mb-2">Backend Unavailable</h2>
-          <p className="text-gray-400 mb-4">The ReproForge backend is not running. Start it with:</p>
-          <code className="bg-black text-green-400 px-4 py-2 rounded text-sm block">cd backend && npm start</code>
-          <p className="text-gray-500 mt-4 text-sm">Switch to Demo Mode to explore the visual interface without a backend.</p>
+          <p className="text-gray-300 text-sm mb-3">
+            Could not connect to the ReproForge backend at:
+          </p>
+          <div className="bg-[#0b0f19] border border-gray-800 rounded px-3 py-2 text-xs font-mono text-blue-400 break-all mb-4">
+            {API_BASE ? `${API_BASE}/api/health` : `${window.location.origin}/api/health (VITE_API_URL not baked into build)`}
+          </div>
+          <p className="text-gray-400 text-xs mb-6">
+            If hosted on Render Free Tier, the backend service spins down after inactivity and can take 40–60 seconds to wake up on the first request.
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={checkBackend}
+              disabled={isCheckingBackend}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-sm font-medium flex items-center gap-2 transition"
+            >
+              {isCheckingBackend ? <Loader2 size={16} className="animate-spin" /> : <RotateCw size={16} />}
+              {isCheckingBackend ? 'Connecting...' : 'Retry Connection'}
+            </button>
+            <button
+              onClick={() => setBackendAvailable(true)}
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm font-medium transition"
+            >
+              Continue Anyway
+            </button>
+          </div>
         </div>
       </div>
     );
