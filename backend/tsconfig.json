@@ -16,7 +16,7 @@
     "allowSyntheticDefaultImports": true,
     "strict": true,
     "skipLibCheck": true,
-    "moduleResolution": "node10",
+    "moduleResolution": "node16",
     "ignoreDeprecations": "5.0",
     "resolveJsonModule": true
   },
