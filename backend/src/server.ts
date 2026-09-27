@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import investigationRouter from './routes/investigation';
-import { validateGitHubUrl } from './services/gitService';
+import { validateGitHubUrl, pruneStaleWorkspaces } from './services/gitService';
 
 const app = express();
 const PORT = parseInt(String(process.env['PORT'] ?? '3001'), 10);
@@ -34,6 +34,12 @@ app.use('/api/investigation', investigationRouter);
 
 const server = app.listen(PORT, () => {
   console.log(`ReproForge backend running on http://localhost:${PORT}`);
+  // Initial workspace pruning on startup
+  pruneStaleWorkspaces();
+  // Automatically sweep old cloned repos every 10 minutes to protect Render disk space
+  setInterval(() => {
+    pruneStaleWorkspaces();
+  }, 10 * 60 * 1000);
 });
 
 server.on('error', (err: NodeJS.ErrnoException) => {

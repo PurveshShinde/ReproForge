@@ -77,27 +77,57 @@ The goal is not simply to generate a plausible fix, but to prove that the fix wo
 
 ---
 
-🧪 Tester Repository
+## 📋 Supported Repositories & Requirements
 
-ReproForge includes a dedicated test repository used to validate the autonomous investigation, patching, and verification pipeline.
+ReproForge is designed to autonomously clone, execute, reproduce, and verify bug fixes. To work seamlessly, target repositories must meet these requirements:
 
-ReproForge Test Repository
+### ✅ Repository Requirements:
+1. **Standard Root Manifest**: The repository root must contain the project's build and dependency manifest (e.g. `package.json` for Node.js, `pom.xml` or `build.gradle` for Java, or `pyproject.toml` / `pytest.ini` for Python).
+2. **Runnable Test Suite**: A configured test command (e.g. `npm test` or `npm run test`) that fails predictably when the bug is present.
+3. **Single-Project Root** *(Not Polyglot Archives)*:
+   > ⚠️ **Note on Polyglot Repositories (e.g. `GildedRose-Refactoring-Kata`)**:
+   > Repositories containing multiple language implementations in subdirectories (e.g., `/Java`, `/JavaScript`, `/Python`, `/Cpp`) without a top-level build file cannot be automatically executed. ReproForge targets single-project repositories or sub-projects with a defined root runner.
 
-GitHub: https://github.com/PurveshShinde/ReproForge-test
+### 🛠️ Supported Runtimes & Test Runners:
+- **Node.js / TypeScript**: `npm`, `yarn`, `pnpm` with `node --test` (TAP 13), `jest`, or `vitest`.
+- **Python**: `pytest` (`pytest -v`, `python -m pytest -v`).
+- **Java**: Maven (`mvn test -B`) and Gradle (`./gradlew test`).
 
-The repository contains intentionally buggy code and tests designed to demonstrate ReproForge's ability to:
+---
 
-1. Clone an external repository.
-2. Detect the project's language and test environment.
-3. Execute the existing test suite.
-4. Identify failing tests.
-5. Trace the failure back to the relevant source code.
-6. Determine the root cause.
-7. Generate and apply a patch.
-8. Re-run the tests.
-9. Verify that the bug has been fixed.
+## 🧪 Verified & Tested Example Repositories
 
-You can use the repository URL directly as an input to ReproForge to reproduce the investigation demonstrated in the project.
+Use any of these repositories directly in the ReproForge input box:
+
+| Repository URL | Tech Stack | Description | Execution Time |
+| :--- | :--- | :--- | :--- |
+| [`https://github.com/PurveshShinde/calculator-bug`](https://github.com/PurveshShinde/calculator-bug) | Node.js (`node:test`) | Minimal zero-dependency arithmetic bug test | ~5 seconds ⚡ |
+| [`https://github.com/PurveshShinde/ReproForge-test`](https://github.com/PurveshShinde/ReproForge-test) | Node.js (`node:test`) | 4-agent bug suite: Auth, Response Transformer, Router, Payments | ~30 seconds |
+| `demo-repo/` *(Included in repo)* | Node.js (`node:test`) | Local mock payment gateway and checkout service | ~5 seconds |
+
+### Quick 2-Minute Test Repo Setup:
+If you want to test your own bug, create a minimal GitHub repository with:
+1. **`package.json`**:
+   ```json
+   { "name": "bug-test", "type": "module", "scripts": { "test": "node --test" } }
+   ```
+2. **`test/calculator.test.js`**:
+   ```javascript
+   import test from 'node:test';
+   import assert from 'node:assert';
+   function divide(a, b) { return a * b; } // Bug: * instead of /
+   test('divide 10 by 2 equals 5', () => { assert.strictEqual(divide(10, 2), 5); });
+   ```
+
+---
+
+## 🧹 Workspace Isolation & Disk Space Protection
+
+Because ReproForge clones repositories and installs dependencies at runtime, the backend incorporates multi-layered disk cleanup to ensure hosting environments (like Render's ephemeral storage) never run out of disk space:
+
+1. **Immediate Workspace Teardown**: As soon as an investigation completes (success, partial fix, or error), `cleanupWorkspace()` deletes the cloned workspace and all `node_modules` from `/tmp/reproforge/`.
+2. **Automated Pre-Clone Pruning**: Before every new git clone, `pruneStaleWorkspaces()` sweeps the temporary directory and purges any abandoned directories older than 10 minutes.
+3. **Background Garbage Sweeper**: A periodic timer runs every 10 minutes on the backend to guarantee zero disk accumulation even if a client disconnects unexpectedly or closes the browser tab.
 
 ---
 

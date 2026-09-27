@@ -34,6 +34,9 @@ export async function cloneRepository(
   const parsed = new URL(url);
   const cleanUrl = `https://github.com${parsed.pathname.replace(/\.git$/, '')}.git`;
 
+  // Clean up any stale workspaces older than 10 minutes before cloning
+  pruneStaleWorkspaces();
+
   const workspaceBase = path.join(os.tmpdir(), 'reproforge');
   fs.mkdirSync(workspaceBase, { recursive: true });
   const workspacePath = fs.mkdtempSync(path.join(workspaceBase, 'repo-'));
@@ -93,5 +96,28 @@ export function getGitLog(workspacePath: string, maxEntries = 20): string[] {
 export function cleanupWorkspace(workspacePath: string): void {
   try {
     fs.rmSync(workspacePath, { recursive: true, force: true });
+  } catch { /* ok */ }
+}
+
+/**
+ * Prune workspace folders older than maxAgeMs (default: 10 minutes)
+ * to prevent disk exhaustion on shared hosting like Render.
+ */
+export function pruneStaleWorkspaces(maxAgeMs = 10 * 60 * 1000): void {
+  const workspaceBase = path.join(os.tmpdir(), 'reproforge');
+  if (!fs.existsSync(workspaceBase)) return;
+
+  try {
+    const entries = fs.readdirSync(workspaceBase);
+    const now = Date.now();
+    for (const entry of entries) {
+      const fullPath = path.join(workspaceBase, entry);
+      try {
+        const stats = fs.statSync(fullPath);
+        if (now - stats.mtimeMs > maxAgeMs) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+        }
+      } catch { /* ok */ }
+    }
   } catch { /* ok */ }
 }

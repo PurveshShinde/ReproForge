@@ -32,6 +32,12 @@ app.post('/api/validate-url', (req, res) => {
 app.use('/api/investigation', investigation_1.default);
 const server = app.listen(PORT, () => {
     console.log(`ReproForge backend running on http://localhost:${PORT}`);
+    // Initial workspace pruning on startup
+    (0, gitService_1.pruneStaleWorkspaces)();
+    // Automatically sweep old cloned repos every 10 minutes to protect Render disk space
+    setInterval(() => {
+        (0, gitService_1.pruneStaleWorkspaces)();
+    }, 10 * 60 * 1000);
 });
 server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
