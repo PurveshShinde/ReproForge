@@ -5,8 +5,8 @@
   "main": "src/server.ts",
   "scripts": {
     "dev": "nodemon --ext ts --exec tsx src/server.ts",
-    "start": "tsx src/server.ts",
     "build": "tsc",
+    "start": "node dist/server.js",
     "test": "echo \"No backend tests\" && exit 0"
   },
   "keywords": [],
@@ -16,14 +16,14 @@
   "dependencies": {
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "typescript": "^5.7.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.0",
     "nodemon": "^3.1.14",
-    "tsx": "^4.23.15",
-    "typescript": "^5.7.0"
+    "tsx": "^4.23.15"
   }
 }
