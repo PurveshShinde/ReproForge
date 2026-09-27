@@ -2,7 +2,7 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "module": "commonjs",
+    "module": "node16",
     "target": "es2022",
     "lib": [
       "es2022"
