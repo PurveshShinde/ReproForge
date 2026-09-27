@@ -149,6 +149,45 @@ failures, emit, depth = 0) {
             };
         }
     }
+    // ── Fallback: test file itself contains the inline function under test ────────
+    if (!bestFallback && depth === 0) {
+        const calledFn = assertionCtx.calledFunction;
+        let targetLine = 1;
+        let targetContent = '';
+        if (calledFn) {
+            const loc = findBugInFunction(testContent, calledFn, assertionCtx);
+            if (loc) {
+                targetLine = loc.line;
+                targetContent = loc.lineContent;
+            }
+        }
+        if (targetLine === 1 && targetContent === '') {
+            const fnMatch = testContent.match(/(?:function\s+(\w+)|const\s+(\w+)\s*=\s*(?:\([^)]*\)|[a-zA-Z0-9_$]+)\s*=>)/);
+            const fnName = fnMatch?.[1] || fnMatch?.[2];
+            if (fnName && fnName !== 'test' && fnName !== 'describe' && fnName !== 'it') {
+                const loc = findBugInFunction(testContent, fnName, assertionCtx);
+                if (loc) {
+                    targetLine = loc.line;
+                    targetContent = loc.lineContent;
+                }
+            }
+        }
+        const language = detectLanguage(testFilePath);
+        emit({ type: 'INVESTIGATION_LOG', message: `Inline implementation detected in ${testRel} (no external imports)`, level: 'info' });
+        emit({ type: 'FILE_DISCOVERED', file: testRel, kind: 'source' });
+        return {
+            sourceFile: testRel,
+            sourceFileFull: testFilePath,
+            functionName: calledFn,
+            line: targetLine,
+            lineContent: targetContent,
+            reason: `Test failure in ${testRel} with inline implementation`,
+            language,
+            content: testContent,
+            actual: assertionCtx.actual,
+            expected: assertionCtx.expected,
+        };
+    }
     return bestFallback;
 }
 function extractAssertionContext(failures) {
