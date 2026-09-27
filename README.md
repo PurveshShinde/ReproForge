@@ -4,14 +4,14 @@ ReproForge is an AI-powered autonomous investigation and patching pipeline desig
 
 Think of it as a fully autonomous debugging engineer that takes a repository URL and a bug report (or simply a failing test suite), iteratively locates the faulty code, generates a patch, applies it, and verifies the fix by re-running the tests.
 
-🎥 Demo
+## 🎥 Demo
 
-<video src="https://github.com/PurveshShinde/ReproForge/raw/refs/heads/main/demo.mp4" controls width="100%">
-  Your browser does not support the video tag.
-  <a href="https://github.com/PurveshShinde/ReproForge/raw/refs/heads/main/demo.mp4">Watch the ReproForge demo video</a>
-</video>«Note: The demo video is included directly in the repository root as "demo.mp4".»
+[▶️ Watch the ReproForge Demo](./demo.mp4)
 
----
+> The demo demonstrates the complete autonomous workflow:
+> repository discovery → test execution → bug localization →
+> root-cause analysis → patch generation → verification.
+
 
 🚀 How It Works
 
@@ -101,42 +101,35 @@ You can use the repository URL directly as an input to ReproForge to reproduce t
 
 ---
 
-📂 Project Structure
+## 📂 Project Structure
 
 The project is split into two main layers:
 
+```text
 ReproForge/
-├── demo.mp4                  # Project demonstration video
+├── demo.mp4
 ├── README.md
-│
-├── backend/                  # Node.js Orchestrator & Agent Engine
+├── backend/
 │   ├── src/
 │   │   ├── agents/
 │   │   │   └── investigationOrchestrator.ts
-│   │   │
-│   │   ├── events/           # Event bus and WebSocket bridging
-│   │   │
-│   │   ├── services/         # Core services
+│   │   ├── events/
+│   │   ├── services/
 │   │   │   ├── aiProvider.ts
 │   │   │   ├── gitService.ts
 │   │   │   ├── sourceResolver.ts
 │   │   │   ├── testRunner.ts
 │   │   │   ├── patchService.ts
 │   │   │   └── verificationService.ts
-│   │   │
-│   │   └── server.ts          # Express API + WebSocket server
-│   │
+│   │   └── server.ts
 │   └── package.json
 │
-└── frontend/                 # React UI Dashboard
+└── frontend/
     ├── src/
-    │   ├── components/        # Graph, terminal, diff & UI components
+    │   ├── components/
     │   └── App.tsx
-    │
     └── package.json
-
----
-
+```
 🛠️ Getting Started
 
 Prerequisites
