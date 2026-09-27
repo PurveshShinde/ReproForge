@@ -19,5 +19,7 @@ export interface TestFailure {
     line?: number;
     /** Raw assertion mismatch text e.g. "20 !== 5" */
     assertionDetail?: string;
+    actual?: string;
+    expected?: string;
 }
 export declare function runTests(workspacePath: string, projectInfo: ProjectInfo, emit: (event: InvestigationEvent) => void): Promise<TestRunResult>;

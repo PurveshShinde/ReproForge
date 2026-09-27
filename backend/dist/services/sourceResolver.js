@@ -154,18 +154,26 @@ failures, emit, depth = 0) {
 function extractAssertionContext(failures) {
     const ctx = {};
     for (const f of failures) {
+        if (f.actual !== undefined)
+            ctx.actual = stripQuotes(f.actual);
+        if (f.expected !== undefined)
+            ctx.expected = stripQuotes(f.expected);
         // Use pre-parsed assertionDetail first ("20 !== 5")
         const detail = f.assertionDetail ?? f.error;
         const neqMatch = detail.match(/(\S+)\s*!==\s*(\S+)/);
         if (neqMatch) {
-            ctx.actual = stripQuotes(neqMatch[1]);
-            ctx.expected = stripQuotes(neqMatch[2]);
+            if (!ctx.actual)
+                ctx.actual = stripQuotes(neqMatch[1]);
+            if (!ctx.expected)
+                ctx.expected = stripQuotes(neqMatch[2]);
         }
         // "Expected values to be strictly equal: \n actual !== expected"
         const strictEqMatch = detail.match(/Expected values to be strictly equal:\s*\n\s*(\S+)\s*!==\s*(\S+)/s);
         if (strictEqMatch) {
-            ctx.actual = stripQuotes(strictEqMatch[1]);
-            ctx.expected = stripQuotes(strictEqMatch[2]);
+            if (!ctx.actual)
+                ctx.actual = stripQuotes(strictEqMatch[1]);
+            if (!ctx.expected)
+                ctx.expected = stripQuotes(strictEqMatch[2]);
         }
         // Extract function name from test name: "divide 10 by 2" → "divide"
         if (f.test) {

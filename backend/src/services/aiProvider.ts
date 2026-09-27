@@ -47,46 +47,92 @@ Respond EXACTLY in this JSON format, no markdown wrapping, no extra text:
 }
 `;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.1 }
-        })
-      });
+      let text = '';
 
-      if (!response.ok) {
-        throw new Error(`AI API returned status ${response.status}`);
+      if (apiKey.startsWith('sk-or-')) {
+        // ── OpenRouter ───────────────────────────────────────────────────────
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            'HTTP-Referer': 'https://reproforge.com',
+            'X-Title': 'ReproForge',
+          },
+          body: JSON.stringify({
+            model: 'google/gemini-2.0-flash-001',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.1,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`OpenRouter returned status ${response.status}`);
+        }
+        const data = await response.json() as any;
+        text = data.choices?.[0]?.message?.content ?? '';
+      } else if (apiKey.startsWith('sk-')) {
+        // ── OpenAI ───────────────────────────────────────────────────────────
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.1,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`OpenAI returned status ${response.status}`);
+        }
+        const data = await response.json() as any;
+        text = data.choices?.[0]?.message?.content ?? '';
+      } else {
+        // ── Google Gemini ────────────────────────────────────────────────────
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.1 },
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Gemini API returned status ${response.status}`);
+        }
+        const data = await response.json() as any;
+        text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
       }
 
-      const data = await response.json() as any;
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      
       if (!text) {
         throw new Error('AI returned empty response');
       }
 
       const jsonStr = text.replace(/^\s*```json\s*/, '').replace(/\s*```\s*$/, '').trim();
       const result = JSON.parse(jsonStr) as AIPatchResult;
-      
+
       if (!result.originalCode || !result.replacementCode || !result.line) {
-         throw new Error('AI missing fields');
+        throw new Error('AI response missing required fields');
       }
       return result;
-    } catch (e) {
-      throw new Error(`PATCH_GENERATION_FAILED: ${(e as Error).message}`);
+    } catch (e: any) {
+      console.warn(`[AIProvider] LLM call failed (${e.message}). Falling back to heuristic mockAIPatch...`);
+      return AIProvider.mockAIPatch(context);
     }
   }
 
   private static mockAIPatch(context: any): AIPatchResult | null {
     const code = context.relevantSourceCode || '';
     const file = context.relevantSourceFiles?.[0] || 'unknown';
-    const actual: string = context.actualValue ?? '';
-    const expected: string = context.expectedValue ?? '';
+    const actual: string = String(context.actualValue ?? '');
+    const expected: string = String(context.expectedValue ?? '');
     const lines = code.split('\n') as string[];
 
     for (let i = 0; i < lines.length; i++) {
@@ -150,6 +196,6 @@ Respond EXACTLY in this JSON format, no markdown wrapping, no extra text:
       }
     }
 
-    throw new Error('PATCH_GENERATION_FAILED: Mock AI could not determine patch for this pattern. Add a GEMINI_API_KEY for full AI-powered analysis.');
+    return null;
   }
 }

@@ -23,6 +23,8 @@ export interface TestFailure {
   line?: number;
   /** Raw assertion mismatch text e.g. "20 !== 5" */
   assertionDetail?: string;
+  actual?: string;
+  expected?: string;
 }
 
 const SAFE_COMMANDS: Record<string, [string, string[]]> = {
@@ -230,98 +232,148 @@ function parseFailures(output: string, parser: ProjectInfo['testOutputParser']):
   }
 
   if (parser === 'unknown') {
-    // ── Node built-in test runner (node:test) ──────────────────────────────
-    // Failing block looks like:
-    //   ✖ divide 10 by 2 (1.44ms)
-    //   ...
-    //   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-    //   20 !== 5
-    //       at TestContext.<anonymous> (file:///...calculator.test.js:6:10)
-    //
-    // Also: "test at calculator.test.js:5:1"  (locates the test declaration)
-    // And the "✖ failing tests:" section re-lists them.
+    // ── TAP 13 Parser (node:test or tap runner) ─────────────────────────────
+    if (output.includes('TAP version') || /not ok \d+ -/.test(output)) {
+      const tapBlockPattern = /not ok \d+ - ([^\n]+)\n---([\s\S]*?)(?:\n\.\.\.|\nnot ok|\n# Subtest|$)/g;
+      let tm: RegExpExecArray | null;
+      while ((tm = tapBlockPattern.exec(output)) !== null) {
+        const testName = tm[1]?.trim() ?? '';
+        const block = tm[2] ?? '';
 
-    let m: RegExpExecArray | null;
+        // Location: location: '/path/to/test.js:5:1'
+        const locMatch = block.match(/location:\s*['"]?(?:file:\/\/\/)?([^:'"]+):(\d+):(\d+)['"]?/);
+        let file: string | undefined;
+        let line: number | undefined;
+        if (locMatch) {
+          const rawPath = locMatch[1] ?? '';
+          line = parseInt(locMatch[2] ?? '0', 10) || undefined;
+          const testMatch = rawPath.match(/(?:test|tests|src|__tests__)[\\/][^\s:'"]+/i);
+          file = testMatch ? testMatch[0].replace(/\\/g, '/') : (rawPath.split(/[\\/]/).pop() || undefined);
+        }
 
-    // Parse each "✖ testName" occurrence and enrich with assertion data below
-    const nodeFailPattern = /✖ (.+?) \(/g;
-    while ((m = nodeFailPattern.exec(output)) !== null) {
-      const testName = m[1]?.trim() ?? '';
-      if (!failures.some(f => f.test === testName)) {
-        failures.push({ test: testName, error: 'Test failed' });
+        // Expected and Actual from YAML block
+        const expMatch = block.match(/\bexpected:\s*['"]?([^\n'"]*?)['"]?(?:\n|$)/);
+        const actMatch = block.match(/\bactual:\s*['"]?([^\n'"]*?)['"]?(?:\n|$)/);
+        let expected = expMatch ? expMatch[1]?.trim() : undefined;
+        let actual = actMatch ? actMatch[1]?.trim() : undefined;
+
+        // Diff-style format (+ actual, - expected)
+        if (actual === undefined) {
+          const diffAct = block.match(/\+\s*([^\s\n+-]+)/);
+          if (diffAct) actual = diffAct[1]?.trim();
+        }
+        if (expected === undefined) {
+          const diffExp = block.match(/-\s*['"]?([^\s\n'"]+)['"]?/);
+          if (diffExp) expected = diffExp[1]?.trim();
+        }
+
+        let assertionDetail: string | undefined;
+        const neqMatch = block.match(/(\S+)\s*!==\s*(\S+)/);
+        if (neqMatch) {
+          assertionDetail = `${neqMatch[1]} !== ${neqMatch[2]}`;
+          if (actual === undefined) actual = neqMatch[1]?.trim();
+          if (expected === undefined) expected = neqMatch[2]?.trim();
+        } else if (actual !== undefined && expected !== undefined) {
+          assertionDetail = `${actual} !== ${expected}`;
+        }
+
+        failures.push({
+          test: testName,
+          error: assertionDetail || 'Test failed',
+          file,
+          line,
+          assertionDetail,
+          actual,
+          expected,
+        });
+      }
+
+      // Count passing and failing tests in TAP
+      const tapOkPattern = /^ok \d+ - /gm;
+      const tapPassCount = (output.match(tapOkPattern)?.length ?? 0);
+      if (failures.length > 0 || tapPassCount > 0) {
+        testsRun = tapPassCount + failures.length;
+        errors = failures.length;
       }
     }
 
-    // Enrich failures with assertion detail and file/line
-    // AssertionError block: "20 !== 5\n\n    at ... (file:///...foo.test.js:6:10)"
-    const assertionBlockPattern = /AssertionError[^\n]*\n\s*([\s\S]+?)\n\s+at\s+\S+\s+\((?:file:\/\/\/)?([^)]+?):(\d+):\d+\)/g;
-    while ((m = assertionBlockPattern.exec(output)) !== null) {
-      const detail = m[1]?.trim() ?? '';
-      const rawFile = m[2]?.trim() ?? '';
-      const lineNo = parseInt(m[3] ?? '0', 10);
-      const fileBase = rawFile.split(/[\\/]/).pop() ?? rawFile;
+    // ── Fallback for standard Node runner (✖ testName) ──────────────────────
+    if (failures.length === 0) {
+      let m: RegExpExecArray | null;
 
-      const targetFailure = failures.find(f => !f.assertionDetail) || (failures.length > 0 ? failures[failures.length - 1] : null);
-
-      if (targetFailure) {
-        if (detail) targetFailure.assertionDetail = detail;
-        if (detail && !targetFailure.error.includes('!==')) targetFailure.error = detail;
-        if (fileBase) targetFailure.file = fileBase;
-        if (lineNo > 0) targetFailure.line = lineNo;
-      } else {
-        failures.push({ error: detail || 'AssertionError', file: fileBase || undefined, line: lineNo || undefined, assertionDetail: detail || undefined });
+      const nodeFailPattern = /✖ (.+?) \(/g;
+      while ((m = nodeFailPattern.exec(output)) !== null) {
+        const testName = m[1]?.trim() ?? '';
+        if (!failures.some(f => f.test === testName)) {
+          failures.push({ test: testName, error: 'Test failed' });
+        }
       }
-    }
 
-    // Simpler "20 !== 5" pattern (Node test runner summary line)
-    const neqPattern = /^\s*(\S+)\s*!==\s*(\S+)\s*$/gm;
-    while ((m = neqPattern.exec(output)) !== null) {
-      const detail = `${m[1]} !== ${m[2]}`;
-      // Do not assign to all failures! Just the next unassigned one.
-      const unassigned = failures.find(f => !f.assertionDetail);
-      if (unassigned) {
-         unassigned.assertionDetail = detail;
-         unassigned.error = detail;
+      const assertionBlockPattern = /AssertionError[^\n]*\n\s*([\s\S]+?)\n\s+at\s+\S+\s+\((?:file:\/\/\/)?([^)]+?):(\d+):\d+\)/g;
+      while ((m = assertionBlockPattern.exec(output)) !== null) {
+        const detail = m[1]?.trim() ?? '';
+        const rawFile = m[2]?.trim() ?? '';
+        const lineNo = parseInt(m[3] ?? '0', 10);
+        const fileBase = rawFile.split(/[\\/]/).pop() ?? rawFile;
+
+        const targetFailure = failures.find(f => !f.assertionDetail) || (failures.length > 0 ? failures[failures.length - 1] : null);
+
+        if (targetFailure) {
+          if (detail) targetFailure.assertionDetail = detail;
+          if (detail && !targetFailure.error.includes('!==')) targetFailure.error = detail;
+          if (fileBase) targetFailure.file = fileBase;
+          if (lineNo > 0) targetFailure.line = lineNo;
+        } else {
+          failures.push({ error: detail || 'AssertionError', file: fileBase || undefined, line: lineNo || undefined, assertionDetail: detail || undefined });
+        }
       }
-    }
 
-    // "test at calculator.test.js:5:1" — gives us the test file location
-    const testAtPattern = /test at ([^:]+):(\d+):\d+/g;
-    while ((m = testAtPattern.exec(output)) !== null) {
-      const fileBase = m[1]?.trim().split(/[\\/]/).pop() ?? '';
-      const lineNo = parseInt(m[2] ?? '0', 10);
-      for (const f of failures) {
-        if (!f.file && fileBase) f.file = fileBase;
-        if (!f.line && lineNo > 0) f.line = lineNo;
+      const neqPattern = /^\s*(\S+)\s*!==\s*(\S+)\s*$/gm;
+      while ((m = neqPattern.exec(output)) !== null) {
+        const detail = `${m[1]} !== ${m[2]}`;
+        const unassigned = failures.find(f => !f.assertionDetail);
+        if (unassigned) {
+          unassigned.assertionDetail = detail;
+          unassigned.error = detail;
+          unassigned.actual = m[1];
+          unassigned.expected = m[2];
+        }
       }
-    }
 
-    // TAP fallback: "not ok N - testname"
-    const tapFailPattern = /not ok \d+ - (.+)/g;
-    while ((m = tapFailPattern.exec(output)) !== null) {
-      const testName = m[1]?.trim() ?? '';
-      if (!failures.some(f => f.test === testName)) {
-        failures.push({ test: testName, error: 'Test failed' });
+      const testAtPattern = /test at ([^:]+):(\d+):\d+/g;
+      while ((m = testAtPattern.exec(output)) !== null) {
+        const fileBase = m[1]?.trim().split(/[\\/]/).pop() ?? '';
+        const lineNo = parseInt(m[2] ?? '0', 10);
+        for (const f of failures) {
+          if (!f.file && fileBase) f.file = fileBase;
+          if (!f.line && lineNo > 0) f.line = lineNo;
+        }
       }
-    }
 
-    // Count passing tests
-    const tapOkPattern = /^ok \d+ /gm;
-    const nodeOkPattern = /✔ (.+?) \(/g;
-    testsRun = (output.match(tapOkPattern)?.length ?? 0) +
-               (output.match(nodeOkPattern)?.length ?? 0) +
-               failures.length;
+      const tapFailPattern = /not ok \d+ - (.+)/g;
+      while ((m = tapFailPattern.exec(output)) !== null) {
+        const testName = m[1]?.trim() ?? '';
+        if (!failures.some(f => f.test === testName)) {
+          failures.push({ test: testName, error: 'Test failed' });
+        }
+      }
 
-    // Node summary: "ℹ fail N"
-    const nodeFailCountPattern = /ℹ fail (\d+)/;
-    const nodePassCountPattern = /ℹ pass (\d+)/;
-    const fcm = nodeFailCountPattern.exec(output);
-    const pcm = nodePassCountPattern.exec(output);
-    if (fcm || pcm) {
-      const fc = fcm ? parseInt(fcm[1] ?? '0', 10) : 0;
-      const pc = pcm ? parseInt(pcm[1] ?? '0', 10) : 0;
-      testsRun = fc + pc;
-      errors = fc;
+      const tapOkPattern = /^ok \d+ /gm;
+      const nodeOkPattern = /✔ (.+?) \(/g;
+      testsRun = (output.match(tapOkPattern)?.length ?? 0) +
+                 (output.match(nodeOkPattern)?.length ?? 0) +
+                 failures.length;
+
+      const nodeFailCountPattern = /ℹ fail (\d+)/;
+      const nodePassCountPattern = /ℹ pass (\d+)/;
+      const fcm = nodeFailCountPattern.exec(output);
+      const pcm = nodePassCountPattern.exec(output);
+      if (fcm || pcm) {
+        const fc = fcm ? parseInt(fcm[1] ?? '0', 10) : 0;
+        const pc = pcm ? parseInt(pcm[1] ?? '0', 10) : 0;
+        testsRun = fc + pc;
+        errors = fc;
+      }
     }
   }
 

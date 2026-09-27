@@ -12,7 +12,10 @@ const app = (0, express_1.default)();
 const PORT = parseInt(String(process.env['PORT'] ?? '3001'), 10);
 app.use((0, cors_1.default)());
 app.use(express_1.default.json({ limit: '1mb' }));
-// Health check
+// Root and health check
+app.get('/', (_req, res) => {
+    res.json({ status: 'ok', message: 'ReproForge backend is running', health: '/api/health' });
+});
 app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', version: '1.0.0' });
 });
