@@ -180,7 +180,8 @@ async function runInvestigation(id) {
             const failure = remainingFailures[i];
             // Phase 5: Locate bug
             emit({ type: 'AGENT_STARTED', agent: 'Reproduction Agent' });
-            emit({ type: 'INVESTIGATION_LOG', message: `✅ Deterministically reproduced by ${failure.file}`, level: 'info' });
+            const failureLabel = failure.file || failure.test || 'test suite';
+            emit({ type: 'INVESTIGATION_LOG', message: `✅ Deterministically reproduced by ${failureLabel}`, level: 'info' });
             const bugLocation = (0, investigationService_1.findBugLocation)(cloneResult.workspacePath, [failure], projectInfo.sourceExtensions, emit);
             if (!bugLocation) {
                 emit({ type: 'INVESTIGATION_LOG', message: 'Unable to precisely locate bug file. Reporting test failure as evidence.', level: 'warn' });
@@ -196,9 +197,9 @@ async function runInvestigation(id) {
                 aiResult = await aiProvider_1.AIProvider.analyzeRootCauseAndPatch({
                     mode: investigationContext.mode,
                     failingTest: failure,
-                    testFile: failure.file,
-                    actualValue: bugLocation.actual,
-                    expectedValue: bugLocation.expected,
+                    testFile: failure.file || bugLocation.file,
+                    actualValue: bugLocation.actual || failure.actual,
+                    expectedValue: bugLocation.expected || failure.expected,
                     relevantSourceFiles: [bugLocation.file],
                     relevantSourceCode: bugLocation.content
                 });
