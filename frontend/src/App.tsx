@@ -3,8 +3,10 @@ import ReactFlow, { Background, Controls, MarkerType } from 'reactflow';
 import type { Node, Edge } from 'reactflow';
 import 'reactflow/dist/style.css';
 import Editor from '@monaco-editor/react';
-import { Play, Activity, Code2, GitCommit, Search, ShieldCheck, TerminalSquare, GitBranch, ChevronRight, AlertCircle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Play, Activity, Code2, GitCommit, Search, ShieldCheck, TerminalSquare, GitBranch, ChevronRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+
+const API_BASE = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/$/, '');
 
 // ─── SHARED TYPES ────────────────────────────────────────────────────────────
 
@@ -88,13 +90,6 @@ function AgentRow({ name, icon, state }: { name: string; icon: React.ReactNode; 
   );
 }
 
-function StatusBadge({ running, status }: { running: boolean; status?: string }) {
-  if (!running && !status) return null;
-  if (status === 'error') return <span className="ml-4 px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded-full flex items-center gap-2"><XCircle size={12}/>ERROR</span>;
-  if (status === 'completed') return <span className="ml-4 px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded-full flex items-center gap-2"><CheckCircle2 size={12}/>COMPLETE</span>;
-  if (running) return <span className="ml-4 px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded-full flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block"></span>AI INVESTIGATING</span>;
-  return null;
-}
 
 // ─── DEMO MODE ────────────────────────────────────────────────────────────────
 
@@ -300,7 +295,7 @@ function RealRepositoryMode() {
 
   // Check backend availability
   useEffect(() => {
-    fetch('/api/health')
+    fetch(`${API_BASE}/api/health`)
       .then(r => r.ok ? setBackendAvailable(true) : setBackendAvailable(false))
       .catch(() => setBackendAvailable(false));
   }, []);
@@ -481,7 +476,7 @@ function RealRepositoryMode() {
         setAgents(p => ({ ...p, verification: 'working' }));
         break;
       case 'VERIFICATION_RESULT': {
-        const r = event as { passed: boolean; regressionPassed: boolean; totalTests?: number; failedTests?: number; notes?: string };
+        const r = event as unknown as { passed: boolean; regressionPassed: boolean; totalTests?: number; failedTests?: number; notes?: string };
         setVerificationResult({ passed: r.passed, regressionPassed: r.regressionPassed, totalTests: r.totalTests, failedTests: r.failedTests, notes: r.notes });
         setLogs(p => [...p, r.passed ? '✅ Verification PASSED' : `⚠ Verification: ${r.notes ?? 'Some tests failing'}`]);
         break;
@@ -527,7 +522,7 @@ function RealRepositoryMode() {
     nodeMap.current = new Map();
 
     try {
-      const res = await fetch('/api/investigation', {
+      const res = await fetch(`${API_BASE}/api/investigation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ repositoryUrl: url, bugDescription: bugDescription || undefined, stackTrace: stackTrace || undefined }),
@@ -546,7 +541,7 @@ function RealRepositoryMode() {
       setLogs(['[SYSTEM] Investigation started...']);
 
       // Open SSE stream
-      const es = new EventSource(`/api/investigation/${body.investigationId}/events`);
+      const es = new EventSource(`${API_BASE}/api/investigation/${body.investigationId}/events`);
       es.onmessage = (e) => {
         try {
           const event = JSON.parse(e.data as string) as RealEvent;
