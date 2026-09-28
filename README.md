@@ -1,56 +1,85 @@
-ReproForge
+<div align="center">
+  <h1>ReproForge — From Bug Report to Verified Fix</h1>
+  <p><strong>An IBM Bob 2.0 Hackathon Project</strong></p>
+  <p>Created by team <a href="https://lablab.ai/ai-hackathons/ibm-bob-2-hackathon/403denied">403Denied</a> on September 27, 2026</p>
+  
+  <p>
+    <img src="https://img.shields.io/badge/Node.js-18+-green.svg" alt="Node.js 18+" />
+    <img src="https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB" alt="React" />
+    <img src="https://img.shields.io/badge/Vite-B73BFE?style=flat&logo=vite&logoColor=FFD62E" alt="Vite" />
+    <img src="https://img.shields.io/badge/Express.js-404D59?style=flat&logo=express&logoColor=white" alt="Express.js" />
+    <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" />
+  </p>
 
-ReproForge is an AI-powered autonomous investigation and patching pipeline designed to automatically discover, reproduce, root-cause, and fix software bugs in codebases by tracing failing tests.
+  <p>
+    <b>Technologies:</b>
+    <a href="https://lablab.ai/tech/generative-agents">Generative Agents</a> •
+    <a href="https://lablab.ai/tech/opus-appliedai">Opus</a> •
+    <a href="https://lablab.ai/tech/anthropic/claude-code">Claude Code</a> •
+    <a href="https://lablab.ai/tech/openai/chatgpt">ChatGPT</a> •
+    <a href="https://lablab.ai/tech/openai/gpt4">GPT-4</a> •
+    <a href="https://lablab.ai/tech/google/gemini-3-pro">Gemini 3 pro</a> •
+    <a href="https://lablab.ai/tech/ibm">IBM</a>
+  </p>
 
-Think of it as a fully autonomous debugging engineer that takes a repository URL and a bug report (or simply a failing test suite), iteratively locates the faulty code, generates a patch, applies it, and verifies the fix by re-running the tests.
+  <p>
+    <b>Categories:</b>
+    <a href="https://lablab.ai/apps/topic/developer-tools">Developer Tools</a>, 
+    <a href="https://lablab.ai/apps/topic/assistant">Assistant</a>, 
+    <a href="https://lablab.ai/apps/topic/automotive">Automotive</a>, 
+    <a href="https://lablab.ai/apps/topic/coding-excellence">Coding excellence</a>, 
+    <a href="https://lablab.ai/apps/topic/productivity">Productivity</a>
+  </p>
+</div>
+
+---
+
+ReproForge is an AI-powered software debugging and repair system built to close the gap between identifying a bug and proving that it has actually been fixed. A developer provides a bug report, stack trace, or error description, and ReproForge analyzes the repository using specialized AI agents. The agents investigate the codebase, examine relevant tests and Git history, identify potential root causes, and collaborate to determine the most likely explanation. 
+
+ReproForge then creates a minimal reproducible test case and runs it against the existing code to prove that the issue actually occurs. Once the failure is confirmed, the system generates a regression test, proposes and applies a minimal code fix, and executes the relevant test suites again. 
+
+The final result is an evidence-backed debugging report showing the complete journey:
+
+**Bug Report → Investigation → Root Cause → Reproduction → Regression Test → Fix → Verification**
+
+Instead of simply generating code or explaining an error, ReproForge focuses on proof. It does not claim a bug is fixed unless the generated reproduction and relevant tests demonstrate that the behavior has been corrected. The project uses IBM Bob 2.0's repository-level AI capabilities, agent workflows, parallel investigation, file and terminal operations, and iterative verification to demonstrate how AI can participate in a complete software engineering workflow.
 
 ## 🎥 Demo
 
 [▶️ Watch the ReproForge Demo](./demo.mp4)
 
-> The demo demonstrates the complete autonomous workflow:
-> repository discovery → test execution → bug localization →
-> root-cause analysis → patch generation → verification.
+> The demo demonstrates the complete autonomous workflow: repository discovery → test execution → bug localization → root-cause analysis → patch generation → verification.
 
-
-🚀 How It Works
+## 🚀 How It Works
 
 ReproForge executes a sophisticated multi-agent investigation flow:
 
-1. Discovery & Setup
-
-Code Investigator + History Investigator
-
+### 1. Discovery & Setup
+**Code Investigator + History Investigator**
 - Clones the repository into an isolated workspace.
 - Detects the project's technology stack.
 - Identifies the package manager and test runner.
 - Maps the project structure and relevant files.
 - Inspects repository history when useful for understanding the bug.
 
-2. Test Execution
-
-Test Investigator
-
+### 2. Test Execution
+**Test Investigator**
 - Runs the project's test suite.
 - Establishes a baseline.
 - Captures failing tests, stack traces, assertion errors, and relevant output.
 - Identifies the specific failure that needs investigation.
 
-3. Bug Localization
-
-Reproduction Agent
-
+### 3. Bug Localization
+**Reproduction Agent**
 - Starts from the failing test.
 - Resolves local imports and dependencies.
 - Traces execution from the test into the relevant source files.
 - Narrows the investigation down to the specific function and faulty code.
 
-4. Root Cause & Patch Generation
-
-Fix Agent
-
+### 4. Root Cause & Patch Generation
+**Fix Agent**
 The relevant debugging context is minimized and provided to the AI provider:
-
 - Failing test
 - Test output
 - Stack trace
@@ -58,16 +87,13 @@ The relevant debugging context is minimized and provided to the AI provider:
 - Repository context
 
 The AIProvider, powered by Gemini/OpenAI, determines:
-
 - The root cause of the failure.
 - The faulty code.
 - The required correction.
 - A minimal patch to fix the issue.
 
-5. Verification
-
-Verification Agent
-
+### 5. Verification
+**Verification Agent**
 - Applies the proposed patch safely.
 - Re-runs the relevant tests.
 - Verifies that the original failure is resolved.
@@ -160,77 +186,79 @@ ReproForge/
     │   └── App.tsx
     └── package.json
 ```
-🛠️ Getting Started
 
-Prerequisites
+---
 
+## 🛠️ Getting Started
+
+### Prerequisites
 - Node.js 18+
 - npm
-- A "GEMINI_API_KEY" or "OPENAI_API_KEY" for dynamic AI patch generation
+- A `GEMINI_API_KEY` or `OPENAI_API_KEY` for dynamic AI patch generation
 
-1. Clone ReproForge
-
+### 1. Clone ReproForge
+```bash
 git clone https://github.com/PurveshShinde/ReproForge.git
 cd ReproForge
+```
 
-2. Start the Backend
-
+### 2. Start the Backend
+```bash
 cd backend
 npm install
 npm run dev
+```
 
-3. Start the Frontend
-
+### 3. Start the Frontend
 Open another terminal:
-
+```bash
 cd frontend
 npm install
 npm run dev
-
-The frontend will be available at:
-
-http://localhost:5173
+```
+The frontend will be available at: http://localhost:5173
 
 Enter a GitHub repository URL into the UI and start an investigation.
 
 ---
 
-🤖 AI Provider & Fallback Logic
+## 🤖 AI Provider & Fallback Logic
 
 ReproForge is designed to remain functional even without an external AI API.
 
-When "GEMINI_API_KEY" or "OPENAI_API_KEY" is configured, the AIProvider can use an LLM to perform root-cause analysis and generate patches.
+When `GEMINI_API_KEY` or `OPENAI_API_KEY` is configured, the AIProvider can use an LLM to perform root-cause analysis and generate patches.
 
-If no API key is available, ReproForge falls back to its built-in "mockAIPatch" system.
+If no API key is available, ReproForge falls back to its built-in `mockAIPatch` system.
 
 The fallback uses dynamic string replacement and heuristic logic to simulate AI-assisted patch generation, allowing the investigation pipeline and demonstrations to run offline.
 
 This makes the system useful for both:
-
 - Live AI-powered investigations
 - Offline demonstrations and testing
 
 ---
 
-🧩 Core Components
+## 🧩 Core Components
 
-Component| Responsibility
-Code Investigator| Detects project structure, language, framework and test environment
-History Investigator| Examines repository history and previous changes
-Test Investigator| Executes tests and captures failures
-Reproduction Agent| Traces failing tests to relevant source code
-Fix Agent| Determines root cause and generates a patch
-Verification Agent| Applies the patch and validates the fix
-AIProvider| Interfaces with Gemini/OpenAI and fallback AI logic
-Source Resolver| Resolves imports and follows source dependencies
-Test Runner| Executes and analyzes test commands
-Patch Service| Handles patch application and fallback patching
-Git Service| Creates isolated repository workspaces
+| Component | Responsibility |
+| :--- | :--- |
+| **Code Investigator** | Detects project structure, language, framework and test environment |
+| **History Investigator** | Examines repository history and previous changes |
+| **Test Investigator** | Executes tests and captures failures |
+| **Reproduction Agent** | Traces failing tests to relevant source code |
+| **Fix Agent** | Determines root cause and generates a patch |
+| **Verification Agent** | Applies the patch and validates the fix |
+| **AIProvider** | Interfaces with Gemini/OpenAI and fallback AI logic |
+| **Source Resolver** | Resolves imports and follows source dependencies |
+| **Test Runner** | Executes and analyzes test commands |
+| **Patch Service** | Handles patch application and fallback patching |
+| **Git Service** | Creates isolated repository workspaces |
 
 ---
 
-🔄 Investigation Pipeline
+## 🔄 Investigation Pipeline
 
+```text
                  GitHub Repository
                         │
                         ▼
@@ -272,10 +300,11 @@ Git Service| Creates isolated repository workspaces
                   │         │
                   ▼         └──► Further Investigation
              Verified Fix
+```
 
 ---
 
-✨ Key Features
+## ✨ Key Features
 
 - 🔍 Autonomous bug investigation
 - 🧪 Automated test execution
@@ -293,10 +322,9 @@ Git Service| Creates isolated repository workspaces
 
 ---
 
-🧰 Tech Stack
+## 🧰 Tech Stack
 
-Frontend
-
+### Frontend
 - React
 - Vite
 - TypeScript
@@ -305,8 +333,7 @@ Frontend
 - Monaco Editor
 - Framer Motion
 
-Backend
-
+### Backend
 - Node.js
 - Express
 - TypeScript
@@ -316,22 +343,31 @@ Backend
 
 ---
 
-🎯 Project Goal
+## 🎯 Project Goal
 
 Traditional debugging often requires a developer to manually:
 
-«Read the failure → reproduce the bug → trace the code → identify the root cause → write a fix → run tests → verify the fix.»
+> *Read the failure → reproduce the bug → trace the code → identify the root cause → write a fix → run tests → verify the fix.*
 
 ReproForge aims to automate this entire workflow.
 
-Input:
+**Input:** Repository + failing tests
 
-Repository + failing tests
-
-Output:
-
-Root cause → Patch → Verified fix
+**Output:** Root cause → Patch → Verified fix
 
 The system is designed around one core principle:
 
-«Don't just suggest a fix — reproduce the failure, patch the code, and verify that the fix actually works.»
+> *"Don't just suggest a fix — reproduce the failure, patch the code, and verify that the fix actually works."*
+
+---
+
+## 👥 Contributors
+
+- **Purvesh Shinde** ([@PurveshShinde](https://github.com/PurveshShinde)) - Creator
+- **Aditi Arvind Sapkal** ([@Aditi040504](https://github.com/Aditi040504)) - Collaborator
+
+---
+
+## 📝 About
+
+ReproForge was built to tackle the repetitive and time-consuming process of debugging software bugs. This project serves as an open-source solution that leverages AI to act as a fully autonomous debugging engineer. It demonstrates the capabilities of multi-agent architectures and AI-driven code intelligence in resolving real-world programming issues efficiently. If you found this project helpful, please consider leaving a ⭐️ on the repository!
